@@ -36,6 +36,8 @@ STABILITY_WINDOW = 60
 STABILITY_THRESHOLD = 1e-3
 CAMERA_DISTANCE_FACTOR = 0.65 # Smaller -> more zoom
 
+FIRE_GROWTH_RATE = 0.5  # Health points per second, for active fires
+
 #DRONI
 COMMUNICATION_RADIUS = 2.5
 TARGET_SEPARATION = 2.0
@@ -134,6 +136,17 @@ def world_to_screen(pos: np.ndarray) -> Tuple[int, int]:
 def world_length_to_screen(length: float) -> int:
     """Converte una lunghezza espressa in metri (mondo) in pixel, usando la stessa scala orizzontale di world_to_screen."""
     return max(1, int(length / AREA_WIDTH * WINDOW_WIDTH))
+
+def draw_transparent_circle(surface, color, center, radius):
+    # 1. Crea una superficie quadrata della dimensione del cerchio con supporto Alpha
+    target_rect = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
+    shape_surface = pygame.Surface(target_rect.size, pygame.SRCALPHA)
+    
+    # 2. Disegna il cerchio al centro della superficie temporanea
+    pygame.draw.circle(shape_surface, color, (radius, radius), radius)
+    
+    # 3. Disegna la superficie temporanea sulla superficie di destinazione
+    surface.blit(shape_surface, target_rect)
 
 
 class PDController:
@@ -799,16 +812,14 @@ class SwarmSimulation:
         pygame.quit()
 
     def step(self, step_index: Optional[int] = None):
-        """Orchestrazione minimale: la simulazione rinfresca i vicini una volta (dato
-        globale, basato sulle posizioni a inizio passo) e poi lascia che ogni Drone
-        esegua la propria intera sequenza di fasi tramite run_step(). La simulazione
-        non calcola nessuna forza e non decide nulla per conto dei droni: gestisce solo
-        l'orchestrazione (ordine delle fasi globali) e le conseguenze condivise
-        (collisioni, rimozione degli incendi spenti)."""
         self._last_neighbors = self.world.refresh_neighbors()
 
         for drone in self.drones:
             drone.run_step()
+
+        for fire in self.fires:
+            if fire["health"] > 0.0:
+                fire["health"] += FIRE_GROWTH_RATE * SIM_TIME_STEP
 
         self.step_collisions = 0
         self._resolve_collisions(step_index)
@@ -879,6 +890,10 @@ class SwarmSimulation:
             fx, fy = world_to_screen(fire["pos"])
             det_r = int((FIRE_DETECTION_RADIUS / AREA_WIDTH) * WINDOW_WIDTH)
             ext_r = int((FIRE_EXTINGUISH_RADIUS / AREA_WIDTH) * WINDOW_WIDTH)
+
+            # Salute residua dell'incendio
+            fire_txt = self.font.render(f"{fire['health']:.0f}", True, (255, 200, 50))
+            self.screen.blit(fire_txt, (fx - 10, fy - 30))
             
             # Cerchio Rilevamento (Arancione)
             pygame.draw.circle(self.screen, (255, 140, 40), (fx, fy), det_r, 1)
@@ -886,9 +901,10 @@ class SwarmSimulation:
             pygame.draw.circle(self.screen, (200, 80, 0), (fx, fy), ext_r, 1)
             
             # Corpo Fuoco (colore dinamico basato sulla salute residua)
-            ratio = max(0.0, fire["health"] / FIRE_HEALTH)
-            f_color = (int(115 + 140 * ratio), int(100 - 40 * ratio), int(100 - 90 * ratio))
-            pygame.draw.circle(self.screen, f_color, (fx, fy), 8)
+            ratio = max(0.0, min(fire["health"], FIRE_HEALTH) / FIRE_HEALTH)
+            f_color = (int(100 + 155 * ratio), int(200 - 120 * ratio), int(100 - 100 * ratio))
+            pygame.draw.circle(self.screen, f_color, (fx, fy), 6)
+            #draw_transparent_circle(self.screen, f_color, (fx, fy), ext_r)
 
         # 3. Scie dei droni
         if SHOW_DRONES_TRAILS:
