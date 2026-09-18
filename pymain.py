@@ -1,8 +1,6 @@
 import argparse
-import os
 import random
 import sys
-from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -28,10 +26,6 @@ SHOW_DRONES_COMMUNICATION = True
 # Stile linee tratteggiate (RGBA con canale alpha per l'effetto sfumato)
 DASHED_LINE_TARGET_COLOR = (255, 110, 255, 100)
 DASHED_LINE_ANCHOR_COLOR = (110, 250, 110, 100)
-# Stability check: if the average target movement over `STABILITY_WINDOW` steps
-# falls below `STABILITY_THRESHOLD`, stop early.
-STABILITY_WINDOW = 60
-STABILITY_THRESHOLD = 1e-3
 CAMERA_DISTANCE_FACTOR = 0.65 # Smaller -> more zoom
 
 FIRE_GROWTH_RATE = 0.5  # Health points per second, for active fires
@@ -107,9 +101,6 @@ EXTINGUISHED_FIRE_MEMORY_TTL_STEPS = FIRE_MEMORY_TTL_STEPS * 3
 
 # Numero di incendi generati quando --random-fires è attivo.
 NUM_FIRES = 3
-
-# Condizioni di terminazione
-STABILITY_MIN_STEPS_BEFORE_STOP = STABILITY_WINDOW  # non valutare la stabilità prima di questo numero di passi
 
 # ------------------------------------------------------------
 # Utils
@@ -775,9 +766,8 @@ class SwarmSimulation:
         return stations if len(stations) == count else self._default_water_stations()[:count]
 
 
-    def __init__(self, headless: bool = False, show_force_vectors: bool = False, show_communication: bool = True,
+    def __init__(self, show_force_vectors: bool = False, show_communication: bool = True,
                  random_fires: bool = False, random_stations: bool = False, log_collisions: bool = False):
-        self.headless = headless
         self.show_force_vectors = show_force_vectors
         self.show_communication = show_communication
         self.log_collisions = log_collisions
@@ -795,8 +785,6 @@ class SwarmSimulation:
         self._last_neighbors: Dict[int, List[Drone]] = {}
 
         # Inizializzazione Display / Pygame
-        if self.headless:
-            os.environ["SDL_VIDEODRIVER"] = "dummy"
         pygame.init()
         pygame.font.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -980,8 +968,7 @@ class SwarmSimulation:
         ren = self.font.render(col_text, True, (255, 255, 0))
         self.screen.blit(ren, (10, 10))
 
-        if not self.headless:
-            pygame.display.flip()
+        pygame.display.flip()
 
     def _draw_vector(self, start_pos: np.ndarray, vec: np.ndarray, color: Tuple[int, int, int], scale: float, weight: int = 1): 
         if np.linalg.norm(vec) < 1e-8:
@@ -994,11 +981,6 @@ class SwarmSimulation:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Simulazione 2D di swarm decentralizzato con Pygame")
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Esegue la simulazione in modalità headless (senza finestra visibile)",
-    )
     parser.add_argument(
         "--show-vectors",
         action="store_true",
@@ -1024,57 +1006,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Abilita il logging dettagliato delle collisioni (forze, velocità, ecc.); disattivato di default per performance",
     )
-    parser.add_argument(
-        "--screenshot",
-        nargs="?",
-        const="screenshot.png",
-        help="Salva uno screenshot della simulazione",
-    )
-    parser.add_argument(
-        "--screenshot-step",
-        type=int,
-        default=0,
-        help="Passo specifico a cui salvare lo screenshot (0 per salvare alla fine)",
-    )
-    parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=None,
-        help="Numero massimo di passi prima della terminazione automatica (default: nessun limite, simulazione infinita)",
-    )
-    parser.add_argument(
-        "--stability-threshold",
-        type=float,
-        default=None,
-        help="Soglia di spostamento medio dei target sotto la quale la simulazione si considera stabile e si ferma (default: disattivata)",
-    )
-    parser.add_argument(
-        "--no-auto-stop",
-        action="store_true",
-        help="Ignora --max-steps e --stability-threshold: la simulazione continua finché non viene chiusa manualmente (Q o chiusura finestra)",
-    )
     return parser
 
 
-def save_image(surface: pygame.Surface, out_path: str) -> None:
-    pygame.image.save(surface, out_path)
-
-
 def run_simulation(
-    headless: bool,
     show_force_vectors: bool = False,
     show_communication: bool = True,
-    screenshot_path: Optional[str] = None,
-    screenshot_step: int = 0,
     random_fires: bool = False,
     random_stations: bool = False,
     log_collisions: bool = False,
-    max_steps: Optional[int] = None,
-    stability_threshold: Optional[float] = None,
-    auto_stop: bool = True,
 ) -> None:
     sim = SwarmSimulation(
-        headless=headless,
         show_force_vectors=show_force_vectors,
         show_communication=show_communication,
         random_fires=random_fires,
@@ -1085,8 +1027,6 @@ def run_simulation(
     try:
         step_count = 0
         paused = False
-        recent_moves = deque(maxlen=STABILITY_WINDOW)
-        prev_targets = [drone.target.copy() for drone in sim.drones]
 
         running = True
         while running:
@@ -1104,33 +1044,10 @@ def run_simulation(
 
             if not paused:
                 sim.step(step_count)
+                step_count += 1
 
             sim.draw_scene()
-
-            total_move = 0.0
-            for i, drone in enumerate(sim.drones):
-                move = np.linalg.norm(drone.target - prev_targets[i])
-                total_move += move
-                prev_targets[i][:] = drone.target
-            avg_move = total_move / max(1, len(sim.drones))
-            recent_moves.append(avg_move)
-
-            step_count += 1
-
-            if screenshot_path is not None and screenshot_step > 0 and step_count == screenshot_step:
-                save_image(sim.screen, screenshot_path)
-
-            if auto_stop:
-                if max_steps is not None and step_count >= max_steps:
-                    running = False
-                elif stability_threshold is not None and len(recent_moves) >= STABILITY_MIN_STEPS_BEFORE_STOP and (sum(recent_moves) / len(recent_moves)) < stability_threshold:
-                    running = False
-
-            if not headless:
-                clock.tick(60)
-
-        if screenshot_path is not None and (screenshot_step <= 0 or step_count < screenshot_step):
-            save_image(sim.screen, screenshot_path)
+            clock.tick(60)
     finally:
         sim.close()
 
@@ -1139,19 +1056,10 @@ if __name__ == "__main__":
     parser = build_argument_parser()
     args = parser.parse_args()
 
-    display_available = os.environ.get("DISPLAY") is not None or os.environ.get("WAYLAND_DISPLAY") is not None
-    effective_headless = args.headless or not display_available
-
     run_simulation(
-        headless=effective_headless,
         show_force_vectors=args.show_vectors,
         show_communication=args.comm,
-        screenshot_path=args.screenshot,
-        screenshot_step=args.screenshot_step,
         random_fires=args.random_fires,
         random_stations=args.random_stations,
         log_collisions=args.log,
-        max_steps=args.max_steps,
-        stability_threshold=args.stability_threshold,
-        auto_stop=not args.no_auto_stop,
     )
