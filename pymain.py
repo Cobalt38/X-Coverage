@@ -23,14 +23,14 @@ WINDOW_HEIGHT = 921  # aspect ratio 20:12
 
 SHOW_FORCE_VECTORS = False
 SHOW_DRONES_COMMUNICATION = True 
-# Stile linee tratteggiate (RGBA con canale alpha per l'effetto sfumato)
+# Stile linee tratteggiate (RGBA)
 DASHED_LINE_TARGET_COLOR = (255, 110, 255, 100)
 DASHED_LINE_ANCHOR_COLOR = (110, 250, 110, 100)
-CAMERA_DISTANCE_FACTOR = 0.65 # Smaller -> more zoom
+CAMERA_DISTANCE_FACTOR = 0.65
 
-FIRE_GROWTH_RATE = 0.5  # Health points per second, for active fires
+FIRE_GROWTH_RATE = 0.5  # Health points per second
 
-#DRONI
+# DRONI
 COMMUNICATION_RADIUS = 2.5
 TARGET_SEPARATION = 2.0
 TARGET_REACHED_DISTANCE = 0.2
@@ -38,7 +38,7 @@ MAX_TARGET_SPEED = 20.0
 MAX_FORCE_ON_TARGET = 10.0
 TARGET_VEL_AGING_FACTOR = 0.1
 MAX_DRONE_SPEED = 1.0
-ANCHOR_TO_TARGET_INTENSITY = 0.0075  # l'ancora segue lentamente il target
+ANCHOR_TO_TARGET_INTENSITY = 0.0075  # L'ancora segue lentamente il target
 
 K_DESIRED_VEL_TO_TARGET = 0.70
 K_REPULSION_BETWEEN_TARGETS = 1.0 
@@ -49,30 +49,34 @@ K_BOUNDARY_REPULSION = 1.0
 FIRE_DETECTION_RADIUS = 2.0
 FIRE_GENERATION_MARGIN = 1.5
 WATER_STATION_GENERATION_MARGIN = 1.5
-MARGIN_REPULSION_BOUNDARY = 1.5 # distanza minima dal bordo della mappa a cui il target inizia a essere respinto verso l'interno.
+MARGIN_REPULSION_BOUNDARY = 1.5 # Distanza minima dal bordo per la repulsione del target
 
-MAX_IDLE_STEPS = 30  # Se il drone è fermo da più di questo numero di passi e non ha fuochi noti, riprende l'esplorazione.
+MAX_IDLE_STEPS = 30  # Step d'inattività prima di riprendere l'esplorazione
 
 # Collision avoidance & Safety parameters
-DRONE_IMPACT_RADIUS = 0.1       # Soglia reale sotto la quale due droni collidono fisicamente
-SAFE_DISTANCE_BASE = 2.4        # Distanza minima di sicurezza tra droni (ellisse di sicurezza)
-SAFE_DISTANCE_K_VEL = 0.6       # Moltiplicatore per allungare l'ellisse di sicurezza lungo la velocità
-K_DAMPING_REPULSION = 7.2       # Guadagno repulsivo del campo potenziale
-K_DAMPING_DAMP = 2.2            # Smorzamento della velocità relativa nel campo potenziale
-MAX_JERK = 8.0                  # Massima variazione dell'accelerazione nel tempo (m/s^3)
+DRONE_IMPACT_RADIUS = 0.1       # Soglia reale di collisione fisica
+SAFE_DISTANCE_BASE = 2.4        # Distanza minima di sicurezza (ellisse di sicurezza)
+SAFE_DISTANCE_K_VEL = 0.6       # Moltiplicatore ellisse di sicurezza su velocità
+K_DAMPING_REPULSION = 7.2       # Guadagno repulsivo campo potenziale
+K_DAMPING_DAMP = 2.2            # Smorzamento velocità relativa
+MAX_JERK = 8.0                  # Variazione massima accelerazione (m/s^3)
 
-AVOID_LOOKAHEAD = 2.0           # Seconds to look ahead when predicting collisions
-AVOID_MIN_DISTANCE = 1.0        # Desired minimum separation (meters)
-AVOID_FORCE = 2.0               # Scaling of avoidance steering
-EMERGENCY_AVOID_DISTANCE = 1.0  # Hard local threshold for evasive override
+AVOID_LOOKAHEAD = 2.0           # Orizzonte temporale predittivo per evitamento (secondi)
+AVOID_MIN_DISTANCE = 1.0        # Distanza di separazione minima desiderata (metri)
+AVOID_FORCE = 2.0               # Intensità evitamento
+EMERGENCY_AVOID_DISTANCE = 0.8  # Soglia locale di emergenza
 
-# Fire extinguishing 
+# Fire extinguishing & Saturation Behavior
 FIRE_HEALTH = 100.0
+FIRE_SPAWN_THRESHOLD = 1.20        # Soglia vita per propagazione incendio
+FIRE_SPAWN_PROB_PER_STEP = 0.003   # Probabilità per passo di generare un nuovo incendio
+FIRE_SPAWN_OFFSET_MAX = 2.0        # Raggio massimo offset incendio figlio
+FIRE_SPAWN_INITIAL_HEALTH = 0.15   # Vita iniziale incendio figlio
 DRONE_WATER_CAPACITY = 20.0
 DRONE_WATER_FLOW_RATE = 5.0 
 FIRE_EXTINGUISH_RADIUS = 1.2
-MAX_DRONES_ON_FIRE = 3          # Numero massimo di droni che possono presidiare/estinguere lo stesso incendio contemporaneamente
-WAIT_DISTANCE_FROM_FIRE = 1.5   # Distanza a cui i droni in eccesso attendono il proprio turno attorno a un incendio già presidiato
+MAX_DRONES_ON_FIRE = 3          # Max droni sullo stesso incendio
+FIRE_SATURATION_BOUNCE_FORCE = 3.5 # Forza di allontanamento radiale se il fuoco è saturo
 
 # Stazione idrica / rifornimento
 WATER_STATION_POS = np.array([AREA_WIDTH * 0.5, AREA_HEIGHT * 0.5], dtype=float)
@@ -84,22 +88,19 @@ WATER_STATION_SERVICE_RADIUS = 0.65
 WATER_STATION_WAIT_RADIUS = 2.4
 WATER_STATION_MIN_SEPARATION = 2.0
 
-TAU = 0.3 # per calcolare la velocità desiderata in base alla distanza dal target, prima di applicare il PID
-# PID, velocity control
+TAU = 0.3 # Per calcolo velocità desiderata da distanza target
+# PID velocity control
 PID_KP = 3.4
 PID_KI = 0.6
 PID_KD = 0.25
 PID_INTEGRAL_LIMIT = 3.0
 PID_MAX_OUTPUT_ACCEL = 4.0
 
-# Un fuoco non riconfermato da osservazione o comunicazione per più di FIRE_MEMORY_TTL_STEPS passi viene dimenticato.
+# TTL memoria incendi
 FIRE_MEMORY_TTL_STEPS = 100
-
-# Un fuoco spento resta "ricordato come spento" (per impedire che una voce non aggiornata di un vicino lo
-# faccia risultare di nuovo attivo) per questo numero di passi.
 EXTINGUISHED_FIRE_MEMORY_TTL_STEPS = FIRE_MEMORY_TTL_STEPS * 3
 
-# Numero di incendi generati quando --random-fires è attivo.
+# Numero incendi generati con --random-fires
 NUM_FIRES = 3
 
 # ------------------------------------------------------------
@@ -107,7 +108,6 @@ NUM_FIRES = 3
 # ------------------------------------------------------------
 
 def clamp_magnitude(vector: np.ndarray, limit: float) -> np.ndarray:
-    # Clamps the magnitude of a vector to a maximum limit, preserving its direction.
     magnitude = np.linalg.norm(vector)
     if magnitude <= 1e-12:
         return vector.copy()
@@ -125,24 +125,22 @@ def vec_to_tuple(v: np.ndarray) -> Tuple[float, float]:
     return (float(v[0]), float(v[1]))
 
 def world_to_screen(pos: np.ndarray) -> Tuple[int, int]:
-    """Converte le coordinate del mondo (0..AREA_WIDTH, 0..AREA_HEIGHT) in coordinate pixel dello schermo (con asse Y invertito per Pygame)."""
+    """Converte coordinate mondo in pixel schermo con asse Y invertito per Pygame."""
     return int((pos[0] / AREA_WIDTH * WINDOW_WIDTH)), int((1.0 - pos[1] / AREA_HEIGHT) * WINDOW_HEIGHT)
 
 def world_length_to_screen(length: float) -> int:
-    """Converte una lunghezza espressa in metri (mondo) in pixel, usando la stessa scala orizzontale di world_to_screen."""
+    """Converte una lunghezza in metri in pixel (scala orizzontale)."""
     return max(1, int(length / AREA_WIDTH * WINDOW_WIDTH))
 
 def draw_transparent_circle(surface, color, center, radius):
     target_rect = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
     shape_surface = pygame.Surface(target_rect.size, pygame.SRCALPHA)
-    
     pygame.draw.circle(shape_surface, color, (radius, radius), radius)
-    
     surface.blit(shape_surface, target_rect)
 
 
 class PDController:
-    """Controllore PID generico su vettori 2D, con limitazione di integrale, output e jerk."""
+    """Controllore PID generico 2D con limitazione di integrale, output e jerk."""
 
     def __init__(self, kp: float, ki: float, kd: float, integral_limit: float, max_output: float, max_jerk: float):
         self.kp = kp
@@ -159,7 +157,7 @@ class PDController:
         self.last_error[:] = 0.0
 
     def step(self, desired_velocity: np.ndarray, current_velocity: np.ndarray, current_acceleration: np.ndarray, dt: float) -> np.ndarray:
-        """Calcola la nuova accelerazione a partire dall'errore di velocità, con limitazione del jerk."""
+        """Calcola la nuova accelerazione dall'errore di velocità con limitazione jerk."""
         error = desired_velocity - current_velocity
         deriv = (error - self.last_error) / max(dt, 1e-12)
         self.integral += error * dt
@@ -203,48 +201,39 @@ class DroneMessage:
     reloading: bool
     water_station_idx: Optional[int]
     refuel_claim_age: int
-    fire_claim: Optional[Tuple[float, float]]
+    extinguishing: bool
+    fire_target: Optional[Tuple[float, float]]
     known_fires: Dict[Tuple[float, float], int]
     extinguished_fires: Dict[Tuple[float, float], int]
 
 
 class CommunicationModule:
-    """Memoria locale dei messaggi ricevuti dai droni vicini."""
+    """Memoria locale dei messaggi ricevuti dai droni vicini tramite doppio buffer."""
 
     def __init__(self, drone: 'Drone'):
         self.drone = drone
         self.neighbors: Dict[int, DroneMessage] = {}
+        self._incoming: Dict[int, DroneMessage] = {}
 
-    def communicate(self, neighbors: List['Drone']) -> None:
-        self.neighbors = {
-            other.idx: DroneMessage(
-                position=other.position.copy(),
-                velocity=other.velocity.copy(),
-                target=other.target.copy(),
-                reloading=other.reloading,
-                water_station_idx=other.water_station_idx,
-                refuel_claim_age=other.refuel_claim_age,
-                fire_claim=other.fire_claim,
-                known_fires=dict(other.known_fires),
-                extinguished_fires=dict(other.extinguished_fires),
-            )
-            for other in neighbors
-        }
+    def begin_round(self) -> None:
+        """Promuove a 'attivi' i messaggi accumulati per il round corrente."""
+        self.neighbors = self._incoming
+        self._incoming = {}
+
+    def deliver(self, sender_idx: int, msg: 'DroneMessage') -> None:
+        """Riceve un messaggio in scrittura per il commit del prossimo round."""
+        self._incoming[sender_idx] = msg
 
     def merge_fire_knowledge(self) -> None:
         drone = self.drone
 
-        # 1. Le informazioni "incendio spento" hanno sempre priorità: si propagano come un'informazione
-        #    a sé stante (stesso schema a "età minima" usato per gli incendi attivi) così che un drone che
-        #    non ha mai visto di persona lo spegnimento possa comunque saperlo da un vicino.
+        # 1. Informazioni incendio spento (priorità massima)
         for message in self.neighbors.values():
             for fire_pos, age in message.extinguished_fires.items():
                 if fire_pos not in drone.extinguished_fires or age < drone.extinguished_fires[fire_pos]:
                     drone.extinguished_fires[fire_pos] = age
 
-        # 2. Le informazioni sugli incendi attivi si propagano normalmente, ma solo se quella posizione
-        #    non risulta già spenta: questo impedisce a una voce "vecchia" di un vicino di far tornare
-        #    in vita un incendio che è già stato confermato estinto altrove nello sciame.
+        # 2. Propagazione incendi attivi
         for message in self.neighbors.values():
             for fire_pos, age in message.known_fires.items():
                 if fire_pos in drone.extinguished_fires:
@@ -252,17 +241,14 @@ class CommunicationModule:
                 if fire_pos not in drone.known_fires or age < drone.known_fires[fire_pos]:
                     drone.known_fires[fire_pos] = age
 
-        # 3. Ripulisci comunque la memoria "attivo" da tutto ciò che ora risulta spento (anche se era già
-        #    presente da prima di ricevere la conferma di spegnimento).
+        # 3. Pulizia della memoria attiva per incendi confermati spenti
         for fire_pos in list(drone.known_fires):
             if fire_pos in drone.extinguished_fires:
                 del drone.known_fires[fire_pos]
-                if drone.fire_claim == fire_pos:
-                    drone.fire_claim = None
 
 
 class SimulationWorld:
-    """Ambiente: geometria, sensori simulati e azioni fisiche richieste dai droni."""
+    """Ambiente: geometria, sensori simulati e azioni fisiche."""
 
     def __init__(self, drones: List['Drone'], fires: List[Fire], area_width: float, area_height: float,
                  water_stations: List[np.ndarray]):
@@ -272,6 +258,7 @@ class SimulationWorld:
         self.area_height = area_height
         self.water_stations = water_stations
         self._neighbor_cache: Optional[Dict[int, List['Drone']]] = None
+        self.step_counter = 0
 
     @property
     def fires(self) -> List[Fire]:
@@ -315,24 +302,32 @@ class SimulationWorld:
         self._remove_dead_fires()
         return total_used
 
-    def update_fires(self) -> None:
+    def update_fires(self, rng: random.Random) -> None:
+        self.step_counter += 1
+        spawn_queue: List[Fire] = []
         for fire in self._fires:
             fire.grow(SIM_TIME_STEP)
+            if fire.health > FIRE_HEALTH * FIRE_SPAWN_THRESHOLD:
+                if rng.random() < FIRE_SPAWN_PROB_PER_STEP:
+                    angle = rng.uniform(0.0, 2.0 * 3.141592653589793)
+                    dist = rng.uniform(0.5, FIRE_SPAWN_OFFSET_MAX)
+                    new_pos = fire.pos + np.array([dist * np.cos(angle), dist * np.sin(angle)])
+                    new_pos[0] = float(np.clip(new_pos[0], FIRE_GENERATION_MARGIN, self.area_width - FIRE_GENERATION_MARGIN))
+                    new_pos[1] = float(np.clip(new_pos[1], FIRE_GENERATION_MARGIN, self.area_height - FIRE_GENERATION_MARGIN))
+                    spawn_queue.append(Fire(pos=new_pos, health=FIRE_HEALTH * FIRE_SPAWN_INITIAL_HEALTH))
+        self._fires.extend(spawn_queue)
         self._remove_dead_fires()
 
     def _remove_dead_fires(self) -> None:
         self._fires[:] = [fire for fire in self._fires if fire.active]
 
 
-
 # ------------------------------------------------------------
 # Drone
 # ------------------------------------------------------------
-# Logica decisionale del singolo drone.
-# Swarm decentralizzato: percezione, comunicazione, pianificazione, movimento, azione sul mondo.
 
 class Drone:
-    """Logica autonoma: percezione locale, comunicazione, decisione e attuazione."""
+    """Logica autonoma del drone: percezione, comunicazione, decisione e attuazione."""
 
     def __init__(self, idx: int, rng: random.Random, world: SimulationWorld):
         self.idx = idx
@@ -347,7 +342,7 @@ class Drone:
         self.target_velocity = np.zeros(2, dtype=float)
         self.known_fires: Dict[Tuple[float, float], int] = {}
         self.extinguished_fires: Dict[Tuple[float, float], int] = {}
-        self.fire_claim: Optional[Tuple[float, float]] = None
+        self.fire_target: Optional[Tuple[float, float]] = None
         self.idle_steps = 0
         self.desired_velocity = np.zeros(2, dtype=float)
         self.last_applied_force = np.zeros(2, dtype=float)
@@ -359,7 +354,7 @@ class Drone:
         self.pid = PDController(PID_KP, PID_KI, PID_KD, PID_INTEGRAL_LIMIT, PID_MAX_OUTPUT_ACCEL, MAX_JERK)
 
     @property
-    def neighbor_messages(self) -> Dict[int, DroneMessage]:
+    def _neighbor_messages(self) -> Dict[int, DroneMessage]:
         return self.communication.neighbors
 
     def sense_environment(self) -> None:
@@ -377,86 +372,50 @@ class Drone:
             if np.linalg.norm(self.position - np.array(fire_pos)) <= FIRE_DETECTION_RADIUS:
                 if not self.world.has_active_fire_near(np.array(fire_pos), 0.5):
                     del self.known_fires[fire_pos]
-                    # Conferma diretta: registriamo lo spegnimento così che si propaghi ai vicini
-                    # e non venga "resuscitato" da una loro voce non aggiornata (vedi merge_fire_knowledge).
                     self.extinguished_fires[fire_pos] = 0
-                    if self.fire_claim == fire_pos:
-                        self.fire_claim = None
+                    if self.fire_target == fire_pos:
+                        self.fire_target = None
 
         for fire in self.world.sense_fires(self.position):
-            self.known_fires[vec_to_tuple(fire.pos)] = 0
+            pos_key = vec_to_tuple(fire.pos)
+            self.known_fires[pos_key] = 0
 
-        if self.fire_claim is not None and self.fire_claim not in self.known_fires:
-            self.fire_claim = None
+        if self.fire_target is not None and self.fire_target not in self.known_fires:
+            self.fire_target = None
 
-    def communicate(self, neighbors: List['Drone']) -> None:
-        self.communication.communicate(neighbors)
+    def _build_message(self) -> DroneMessage:
+        return DroneMessage(
+            position=self.position.copy(),
+            velocity=self.velocity.copy(),
+            target=self.target.copy(),
+            reloading=self.reloading,
+            water_station_idx=self.water_station_idx,
+            refuel_claim_age=self.refuel_claim_age,
+            extinguishing=self.is_extinguishing_fire(),
+            fire_target=self.fire_target,
+            known_fires=dict(self.known_fires),
+            extinguished_fires=dict(self.extinguished_fires),
+        )
+
+    def _deliver(self, sender_idx: int, msg: DroneMessage) -> None:
+        self.communication.deliver(sender_idx, msg)
+
+    def merge_neighbor_knowledge(self) -> None:
         self.communication.merge_fire_knowledge()
-
-    def _fire_priority_rank(self, fire_pos: Tuple[float, float]) -> int:
-        """Posizione (0 = massima priorità) di questo drone nella coda locale di droni interessati
-        a `fire_pos`, calcolata solo da informazioni note localmente (proprio stato + messaggi dei
-        vicini): più un drone conosce da tempo/con certezza il fuoco (età minore), più alta è la sua
-        priorità; a parità di età l'idx più basso vince, per rompere il pareggio in modo deterministico."""
-        candidates: Dict[int, int] = {}
-        self_age = self.known_fires.get(fire_pos)
-        if self_age is not None:
-            candidates[self.idx] = self_age
-        elif self.fire_claim == fire_pos:
-            candidates[self.idx] = 0
-        for other_idx, message in self.neighbor_messages.items():
-            age = message.known_fires.get(fire_pos)
-            if age is None and message.fire_claim == fire_pos:
-                age = 0
-            if age is not None:
-                candidates[other_idx] = min(age, candidates.get(other_idx, age))
-        ranking = sorted(candidates.items(), key=lambda item: (item[1], item[0]))
-        for rank, (idx, _age) in enumerate(ranking):
-            if idx == self.idx:
-                return rank
-        return len(ranking)  # non dovrebbe mai accadere: self è sempre incluso tra i candidati
-
-    def _fire_target_offset(self, fire_pos: np.ndarray, rank: int) -> np.ndarray:
-        """Posizione di lavoro attorno al fuoco assegnata a un drone che lo sta attivamente estinguendo.
-        `rank` (0 .. MAX_DRONES_ON_FIRE-1) distingue i droni assegnati contemporaneamente allo stesso
-        fuoco, in modo che non convergano tutti sullo stesso punto."""
-        angle = (rank * 2.399963) % (2.0 * np.pi)
-        return fire_pos + FIRE_EXTINGUISH_RADIUS * 0.55 * np.array([np.cos(angle), np.sin(angle)])
-
-    def _fire_wait_offset(self, fire_pos: np.ndarray, rank: int) -> np.ndarray:
-        """Posizione di attesa attorno al fuoco per i droni in eccesso rispetto a MAX_DRONES_ON_FIRE,
-        analoga alla coda usata per le stazioni idriche: ogni `rank` ottiene un angolo distinto così
-        i droni in coda si distribuiscono invece di ammassarsi."""
-        angle = (rank * 2.399963) % (2.0 * np.pi)
-        wait_pos = fire_pos + WAIT_DISTANCE_FROM_FIRE * np.array([np.cos(angle), np.sin(angle)])
-        wait_pos[0] = np.clip(wait_pos[0], 0.0, self.world.area_width)
-        wait_pos[1] = np.clip(wait_pos[1], 0.0, self.world.area_height)
-        return wait_pos
 
     def _select_fire(self) -> Optional[Tuple[float, float]]:
         if not self.known_fires:
             return None
         return min(self.known_fires, key=lambda p: np.linalg.norm(np.array(p) - self.position))
 
-    def _claim_fire_if_needed(self) -> None:
-        fire_pos = self._select_fire()
-        if fire_pos is None:
-            self.fire_claim = None
-            return
-        rank = self._fire_priority_rank(fire_pos)
-        if rank < MAX_DRONES_ON_FIRE:
-            # Tra i primi MAX_DRONES_ON_FIRE per questo fuoco: lo reclama come target attivo.
-            self.fire_claim = fire_pos
-            self.target = self._fire_target_offset(np.array(fire_pos, dtype=float), rank)
-            self.original_target = self.target.copy()
-            self.target_velocity[:] = 0.0
-        else:
-            # Troppi droni già assegnati: si posiziona in attesa vicino al fuoco, senza reclamarlo,
-            # finché non salirà di priorità (es. i droni davanti finiscono l'acqua o il fuoco si sposta).
-            self.fire_claim = None
-            self.target = self._fire_wait_offset(np.array(fire_pos, dtype=float), rank)
-            self.original_target = self.target.copy()
-            self.target_velocity[:] = 0.0
+    def _count_drones_on_fire(self, fire_pos: Tuple[float, float]) -> int:
+        """Conta quanti droni vicini stanno già spegnendo o puntando a questo specifico incendio."""
+        count = 0
+        fire_arr = np.array(fire_pos)
+        for msg in self._neighbor_messages.values():
+            if msg.fire_target == fire_pos or (msg.extinguishing and np.linalg.norm(msg.position - fire_arr) <= FIRE_DETECTION_RADIUS):
+                count += 1
+        return count
 
     def compute_repulsion_between_targets(self, neighbors: List['Drone']) -> np.ndarray:
         force = np.zeros(2, dtype=float)
@@ -467,11 +426,7 @@ class Drone:
                 continue
             if dist < 1e-6:
                 pos_delta = self.position - other.position
-                if np.linalg.norm(pos_delta) > 1e-6:
-                    direction = normalize(pos_delta)
-                else:
-                    angle = (self.idx + 1) * 2.399963
-                    direction = np.array([np.cos(angle), np.sin(angle)])
+                direction = normalize(pos_delta) if np.linalg.norm(pos_delta) > 1e-6 else np.array([1.0, 0.0])
                 force += K_REPULSION_BETWEEN_TARGETS * TARGET_SEPARATION * direction
             else:
                 force += K_REPULSION_BETWEEN_TARGETS * (TARGET_SEPARATION - dist) * delta / dist
@@ -491,12 +446,12 @@ class Drone:
         return force
 
     def compute_fire_force(self) -> np.ndarray:
-        if self.fire_claim is None:
+        if self.fire_target is None:
             return np.zeros(2, dtype=float)
-        fire = np.array(self.fire_claim, dtype=float)
+        fire = np.array(self.fire_target, dtype=float)
         delta = fire - self.target
         dist = np.linalg.norm(delta)
-        return K_FIRE_DRAGGING * max(dist - FIRE_EXTINGUISH_RADIUS * 0.33, 0.0) * normalize(delta)
+        return K_FIRE_DRAGGING * dist * normalize(delta)
 
     def _sample_exploration_target(self) -> np.ndarray:
         return np.array([self.rng.uniform(0.0, self.world.area_width), self.rng.uniform(0.0, self.world.area_height)], dtype=float)
@@ -521,14 +476,49 @@ class Drone:
         if self.reloading:
             self._move_toward_station()
             return
-        self._claim_fire_if_needed()
+
+        # Rilevamento incendio e controllo saturazione
+        selected_fire = self._select_fire()
+        if selected_fire is not None:
+            active_drones = self._count_drones_on_fire(selected_fire)
+            
+            # Se l'incendio è saturo e siamo vicini, rimbalza radialmente via
+            if active_drones >= MAX_DRONES_ON_FIRE and self.fire_target != selected_fire:
+                fire_arr = np.array(selected_fire)
+                dist_to_fire = np.linalg.norm(self.position - fire_arr)
+                
+                if dist_to_fire <= FIRE_DETECTION_RADIUS:
+                    # Direzione radiale di allontanamento
+                    bounce_dir = normalize(self.position - fire_arr)
+                    if np.linalg.norm(bounce_dir) < 1e-6:
+                        bounce_dir = normalize(self.velocity) if np.linalg.norm(self.velocity) > 1e-6 else np.array([1.0, 0.0])
+                    
+                    # Proietta un nuovo target di esplorazione via dal fuoco
+                    self.target = self.position + bounce_dir * (FIRE_DETECTION_RADIUS * 2.0)
+                    self.target[0] = np.clip(self.target[0], 0.0, self.world.area_width)
+                    self.target[1] = np.clip(self.target[1], 0.0, self.world.area_height)
+                    self.anchor_target = self.target.copy()
+                    self.fire_target = None
+            else:
+                # Può intervenire
+                self.fire_target = selected_fire
+                self.target = np.array(selected_fire, dtype=float)
+                self.original_target = self.target.copy()
+
+        # Se sta spegnendo, blocca il movimiento ed evita lo "jittering"
+        if self.is_extinguishing_fire():
+            self.velocity[:] = 0.0
+            self.acceleration[:] = 0.0
+            self.desired_velocity[:] = 0.0
+            self.pid.reset()
+            return
+
         self._update_target_position(neighbors)
         self._integrate_motion(self._compute_desired_velocity_with_avoidance())
-        self._handle_target_reached()
         self._maybe_resume_exploration()
 
     def _estimate_station_load(self, station_idx: int) -> int:
-        return sum(1 for state in self.neighbor_messages.values()
+        return sum(1 for state in self._neighbor_messages.values()
                    if state.reloading and state.water_station_idx == station_idx
                    and np.linalg.norm(state.position - self.world.water_stations[station_idx]) <= WATER_STATION_SERVICE_RADIUS) + int(self.reloading and self.water_station_idx == station_idx and self._is_in_station_service_area(station_idx))
 
@@ -545,7 +535,7 @@ class Drone:
             return candidates[0]
         station_pos = self.world.water_stations[self.water_station_idx]
         candidates.extend((message.refuel_claim_age, other_idx)
-                           for other_idx, message in self.neighbor_messages.items()
+                           for other_idx, message in self._neighbor_messages.items()
                            if message.reloading and message.water_station_idx == self.water_station_idx
                            and np.linalg.norm(message.position - station_pos) <= WATER_STATION_WAIT_RADIUS)
         return min(candidates)
@@ -556,7 +546,7 @@ class Drone:
         station_pos = self.world.water_stations[self.water_station_idx]
         candidates = [(self.refuel_claim_age, self.idx)]
         candidates.extend((message.refuel_claim_age, other_idx)
-                           for other_idx, message in self.neighbor_messages.items()
+                           for other_idx, message in self._neighbor_messages.items()
                            if message.reloading and message.water_station_idx == self.water_station_idx
                            and np.linalg.norm(message.position - station_pos) <= WATER_STATION_WAIT_RADIUS)
         candidates.sort()
@@ -568,7 +558,7 @@ class Drone:
         self.reloading = True
         self.water_station_idx = self._select_water_station()
         self.refuel_claim_age = 0
-        self.fire_claim = None
+        self.fire_target = None
         self.original_target = self.world.water_stations[self.water_station_idx].copy()
         self.target = self.original_target.copy()
         self.target_velocity[:] = 0.0
@@ -582,7 +572,7 @@ class Drone:
         if self._can_enter_station_service_area() and priority[1] == self.idx:
             target_pos = station_pos.copy()
         else:
-            claims = [(message.refuel_claim_age, other_idx) for other_idx, message in self.neighbor_messages.items()
+            claims = [(message.refuel_claim_age, other_idx) for other_idx, message in self._neighbor_messages.items()
                       if message.reloading and message.water_station_idx == self.water_station_idx]
             claims.append((self.refuel_claim_age, self.idx))
             claims.sort()
@@ -612,12 +602,14 @@ class Drone:
         self._refresh_anchor()
 
     def _compute_desired_velocity_with_avoidance(self) -> np.ndarray:
+        """Evitamento collisioni tra droni basato su campi potenziale ed ellisse di sicurezza."""
         desired_velocity = K_DESIRED_VEL_TO_TARGET * (self.target - self.position)
         speed = np.linalg.norm(self.velocity)
         safety_margin = AVOID_MIN_DISTANCE + SAFE_DISTANCE_K_VEL * speed
         emergency = False
         emergency_vector = np.zeros(2, dtype=float)
-        for state in self.neighbor_messages.values():
+
+        for state in self._neighbor_messages.values():
             rel = self.position - state.position
             distance = np.linalg.norm(rel)
             if distance < 1e-6:
@@ -626,16 +618,23 @@ class Drone:
             v_rel = self.velocity - state.velocity
             if np.dot(v_rel, unit) >= 0.0:
                 continue
+
+            lookahead = AVOID_LOOKAHEAD
             margin = safety_margin
-            if self.reloading and state.reloading and self.water_station_idx == state.water_station_idx:
-                margin = min(margin, 0.65)
-            predicted = rel + v_rel * AVOID_LOOKAHEAD
+
+            # Se entrambi stanno spegnendo, rilascia i vincoli per evitare collisioni fittizie
+            if state.extinguishing and self.is_extinguishing_fire():
+                continue
+
+            predicted = rel + v_rel * lookahead
             predicted_distance = np.linalg.norm(predicted)
+
             if predicted_distance < margin:
                 desired_velocity += normalize(predicted) * AVOID_FORCE * (margin - predicted_distance) / max(margin, 1e-6)
             if distance < EMERGENCY_AVOID_DISTANCE:
                 emergency = True
                 emergency_vector += unit * (EMERGENCY_AVOID_DISTANCE - distance) * 6.0 - v_rel * 0.8
+
         if emergency:
             desired_velocity = emergency_vector + 0.25 * (self.target - self.position)
         return clamp_magnitude(desired_velocity, MAX_DRONE_SPEED)
@@ -648,36 +647,23 @@ class Drone:
         self.position[0] = np.clip(self.position[0], 0.0, self.world.area_width)
         self.position[1] = np.clip(self.position[1], 0.0, self.world.area_height)
 
-    def _handle_target_reached(self) -> None:
-        if self.has_reached_target():
+    def _maybe_resume_exploration(self) -> None:
+        if not self.reloading and self.fire_target is None and not self.known_fires and self.has_reached_target():
             self.idle_steps += 1
-            if self.is_extinguishing_fire():
+            if self.idle_steps > MAX_IDLE_STEPS:
+                self.original_target = self._sample_exploration_target()
+                self.anchor_target = self.original_target.copy()
+                self.target = self.original_target.copy()
                 self.target_velocity[:] = 0.0
-                self.target = self.position.copy()
-                self.velocity *= 0.65
-                self.acceleration[:] = 0.0
-                self.desired_velocity[:] = 0.0
+                self.idle_steps = 0
         else:
             self.idle_steps = 0
 
-        # se sia il drone che il target sono sullo stesso fuoco, il drone comincia subito a spegnere l'incendio e il target viene portato sul drone:
-        if self.fire_claim is not None and np.linalg.norm(self.position - np.array(self.fire_claim)) <= FIRE_EXTINGUISH_RADIUS * 1.25:
-            self.target = self.position.copy()
-            self.target_velocity[:] = 0.0
-
-    def _maybe_resume_exploration(self) -> None:
-        if not self.reloading and self.fire_claim is None and not self.known_fires and self.has_reached_target() and self.idle_steps > MAX_IDLE_STEPS:
-            self.original_target = self._sample_exploration_target()
-            self.anchor_target = self.original_target.copy()
-            self.target = self.original_target.copy()
-            self.target_velocity[:] = 0.0
-            self.idle_steps = 0
-
     def is_extinguishing_fire(self) -> bool:
-        return self.has_reached_target() and self.water > 0.0 and self.world.has_active_fire_near(self.position, FIRE_EXTINGUISH_RADIUS)
+        return self.water > 0.0 and self.world.has_active_fire_near(self.position, FIRE_EXTINGUISH_RADIUS)
 
     def try_extinguish(self) -> None:
-        if not self.has_reached_target() or self.water <= 0.0:
+        if self.water <= 0.0:
             return
         used = self.world.request_extinguish(self.position, self.water, DRONE_WATER_FLOW_RATE)
         self.water -= used
@@ -685,7 +671,7 @@ class Drone:
             for fire_pos in list(self.known_fires):
                 if np.linalg.norm(self.position - np.array(fire_pos)) <= FIRE_EXTINGUISH_RADIUS * 1.25:
                     del self.known_fires[fire_pos]
-            self.fire_claim = None
+            self.fire_target = None
 
     def try_reload(self) -> None:
         if not self.reloading or not self.has_reached_target():
@@ -697,24 +683,22 @@ class Drone:
             self.water_station_idx = None
             self.refuel_claim_age = 0
             self.target_velocity[:] = 0.0
-            nearest = min(self.known_fires, key=lambda p: np.linalg.norm(np.array(p) - self.position), default=None)
-            # Assegnazione "di partenza": il prossimo _claim_fire_if_needed() (già al prossimo passo)
-            # ricalcolerà rank e target reali, mettendo il drone in coda se ormai il fuoco è già presidiato
-            # da MAX_DRONES_ON_FIRE droni.
-            if nearest is not None:
-                rank = self._fire_priority_rank(nearest)
-                self.fire_claim = nearest if rank < MAX_DRONES_ON_FIRE else None
-                fire_offset = self._fire_target_offset if rank < MAX_DRONES_ON_FIRE else self._fire_wait_offset
-                self.target = fire_offset(np.array(nearest, dtype=float), rank)
-            else:
-                self.fire_claim = None
-                self.target = self._sample_exploration_target()
+            self.fire_target = None
+            self.target = self._sample_exploration_target()
             self.original_target = self.target.copy()
 
-    def run_step(self) -> None:
+    def pre_step(self) -> None:
+        """Calcola il messaggio del drone e lo trasmette ai vicini."""
+        msg = self._build_message()
+        for neighbor in self.world.get_neighbors(self):
+            neighbor._deliver(self.idx, msg)
+
+    def step(self) -> None:
+        """Avanzamento di un passo di simulazione."""
+        self.communication.begin_round()
         self.sense_environment()
+        self.merge_neighbor_knowledge()
         neighbors = self.world.get_neighbors(self)
-        self.communicate(neighbors)
         self.decide_and_move(neighbors)
         self.try_extinguish()
         self.try_reload()
@@ -723,10 +707,6 @@ class Drone:
 # ------------------------------------------------------------
 # SwarmSimulation (orchestrazione centrale e rendering)
 # ------------------------------------------------------------
-# Questa classe gestisce:
-# - la creazione dell'ambiente
-# - la logica di collisione globale
-# - il rendering del mondo in una finestra Pygame
 
 class SwarmSimulation:
     @staticmethod
@@ -784,7 +764,6 @@ class SwarmSimulation:
         self.step_collisions = 0
         self._last_neighbors: Dict[int, List[Drone]] = {}
 
-        # Inizializzazione Display / Pygame
         pygame.init()
         pygame.font.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -799,53 +778,34 @@ class SwarmSimulation:
         self._last_neighbors = self.world.refresh_neighbors()
 
         for drone in self.drones:
-            drone.run_step()
+            drone.pre_step()
 
-        self.world.update_fires()
+        for drone in self.drones:
+            drone.step()
+
+        self.world.update_fires(self.rng)
         self.step_collisions = 0
         self._resolve_collisions(step_index)
 
     def _resolve_collisions(self, step_index: Optional[int] = None):
-        """Rileva le collisioni fisiche per scopi statistici."""
+        """Rileva le collisioni fisiche per fini statistici."""
         n = len(self.drones)
         for i in range(n):
             for j in range(i + 1, n):
                 a = self.drones[i]
                 b = self.drones[j]
                 dist = np.linalg.norm(a.position - b.position)
-                if dist < DRONE_IMPACT_RADIUS:  # il raggio visivo del drone in draw_scene è derivato da questa stessa costante
+                if dist < DRONE_IMPACT_RADIUS:
                     self.step_collisions += 1
                     self.total_collisions += 1
                     if not self.log_collisions:
-                        continue  # evita tutto il calcolo di forze/vettori sottostante quando il logging è disattivato
-                    neigh_a = self._last_neighbors.get(a.idx, [])
-                    neigh_b = self._last_neighbors.get(b.idx, [])
-                    force_a = a.compute_total_force(neigh_a)
-                    force_b = b.compute_total_force(neigh_b)
-                    rep_a = a.compute_repulsion_between_targets(neigh_a)
-                    rep_b = b.compute_repulsion_between_targets(neigh_b)
-                    fire_a = a.compute_fire_force()
-                    fire_b = b.compute_fire_force()
-                    boundary_a = a.compute_boundary_force()
-                    boundary_b = b.compute_boundary_force()
-                    print(
-                        f"[collision] step={step_index} ids=({a.idx},{b.idx}) "
-                        f"dist={dist:.4f} "
-                        f"pos_a={tuple(np.round(a.position, 4))} pos_b={tuple(np.round(b.position, 4))} "
-                        f"vel_a={tuple(np.round(a.velocity, 4))} vel_b={tuple(np.round(b.velocity, 4))} "
-                        f"target_a={tuple(np.round(a.target, 4))} target_b={tuple(np.round(b.target, 4))} "
-                        f"desired_a={tuple(np.round(a.desired_velocity, 4))} desired_b={tuple(np.round(b.desired_velocity, 4))} "
-                        f"force_a={tuple(np.round(force_a, 4))} force_b={tuple(np.round(force_b, 4))} "
-                        f"rep_a={tuple(np.round(rep_a, 4))} rep_b={tuple(np.round(rep_b, 4))} "
-                        f"fire_a={tuple(np.round(fire_a, 4))} fire_b={tuple(np.round(fire_b, 4))} "
-                        f"boundary_a={tuple(np.round(boundary_a, 4))} boundary_b={tuple(np.round(boundary_b, 4))} "
-                        f"water_a={a.water:.2f} water_b={b.water:.2f} reloading_a={a.reloading} reloading_b={b.reloading}"
-                    )
+                        continue
+                    print(f"[collision] step={step_index} ids=({a.idx},{b.idx}) dist={dist:.4f}")
 
     def draw_scene(self):
         self.screen.fill((20, 20, 25))
 
-        # 1. Stazione Idrica
+        # 1. Stazioni idriche
         for station_idx, station_pos in enumerate(self.world.water_stations):
             st_x, st_y = world_to_screen(station_pos)
             pygame.draw.circle(self.screen, (30, 100, 200), (st_x, st_y), 18, 2)
@@ -858,22 +818,17 @@ class SwarmSimulation:
             det_r = int((FIRE_DETECTION_RADIUS / AREA_WIDTH) * WINDOW_WIDTH)
             ext_r = int((FIRE_EXTINGUISH_RADIUS / AREA_WIDTH) * WINDOW_WIDTH)
 
-            # Salute residua dell'incendio
             fire_txt = self.font.render(f"{fire.health:.0f}", True, (255, 200, 50))
             self.screen.blit(fire_txt, (fx - 10, fy - 30))
             
-            # Cerchio Rilevamento (Arancione)
             pygame.draw.circle(self.screen, (255, 140, 40), (fx, fy), det_r, 1)
-            # Cerchio Estinzione
             pygame.draw.circle(self.screen, (200, 80, 0), (fx, fy), ext_r, 1)
             
-            # Corpo Fuoco (colore dinamico basato sulla salute residua)
             ratio = max(0.0, min(fire.health, FIRE_HEALTH) / FIRE_HEALTH)
             f_color = (int(100 + 155 * ratio), int(200 - 120 * ratio), int(100 - 100 * ratio), 50)
-            #pygame.draw.circle(self.screen, f_color, (fx, fy), 6)
             draw_transparent_circle(self.screen, f_color, (fx, fy), ext_r)
 
-        # 3. Connessioni di Comunicazione
+        # 3. Connessioni di comunicazione
         if self.show_communication:
             for drone in self.drones:
                 for other in self._last_neighbors.get(drone.idx, []):
@@ -882,14 +837,13 @@ class SwarmSimulation:
                         p1 = world_to_screen(other.position)
                         pygame.draw.line(self.screen, (100, 160, 220, 50), p0, p1, 1)
 
-        # 4. Linee tratteggiate (disegnate su overlay trasparente per un effetto sfumato)
+        # 4. Linee tratteggiate
         self.line_overlay.fill((0, 0, 0, 0))
         for drone in self.drones:
             px, py = world_to_screen(drone.position)
             tx, ty = world_to_screen(drone.target)
             ax, ay = world_to_screen(drone.anchor_target)
 
-            # Linea dal drone al target corrente, in stile tratteggiato.
             dx = tx - px
             dy = ty - py
             length = max(1.0, np.hypot(dx, dy))
@@ -905,7 +859,6 @@ class SwarmSimulation:
                 y1 = py + dy * end_t
                 pygame.draw.line(self.line_overlay, DASHED_LINE_TARGET_COLOR, (x0, y0), (x1, y1), 1)
 
-            # Linea dal drone all'ancora attuale, in stile tratteggiato.
             dx = ax - px
             dy = ay - py
             length = max(1.0, np.hypot(dx, dy))
@@ -923,24 +876,17 @@ class SwarmSimulation:
 
         self.screen.blit(self.line_overlay, (0, 0))
 
-        # 5. Droni, Target e Vettori
+        # 5. Droni, target e vettori
         for drone in self.drones:
             px, py = world_to_screen(drone.position)
             tx, ty = world_to_screen(drone.target)
             ox, oy = world_to_screen(drone.original_target)
             ax, ay = world_to_screen(drone.anchor_target)
 
-            # Target Originale, Ancora e Target Corrente
             pygame.draw.circle(self.screen, (50, 220, 80), (ox, oy), 3)
             pygame.draw.circle(self.screen, (160, 160, 255), (ax, ay), 3, 1)
             pygame.draw.circle(self.screen, (230, 50, 50), (tx, ty), 4)
 
-            # Vettori di forza
-            # repulsione con target: giallo, 
-            # attrazione verso target originale: ciano, 
-            # attrazione verso fuoco: arancione, 
-            # repulsione dai bordi: blu, 
-            # forza totale: bianco
             if self.show_force_vectors:
                 neighs = self._last_neighbors.get(drone.idx, [])
                 self._draw_vector(drone.target, drone.compute_repulsion_between_targets(neighs), (255, 200, 50), 0.2)
@@ -949,21 +895,18 @@ class SwarmSimulation:
                 self._draw_vector(drone.target, drone.compute_boundary_force(), (50, 50, 230), 0.2)
                 self._draw_vector(drone.target, drone.last_applied_force, (255, 255, 255), 0.2)
 
-            # Indicatore Anello Estinzione
             if drone.is_extinguishing_fire():
                 pygame.draw.circle(self.screen, (255, 230, 20), (px, py), 12, 2)
 
-            # Indicatore Anello Primo in coda di rifornimento
             if drone.reloading and drone.water_station_idx is not None and drone._can_enter_station_service_area() and drone._station_service_priority()[1] == drone.idx:
                 pygame.draw.circle(self.screen, (20, 200, 255), (px, py), 14, 2)
 
-            # Corpo Drone (Colore basato sull'acqua residua, con sfumatura)
             w_ratio = drone.water / DRONE_WATER_CAPACITY
             d_color = (int(255 * (1.0 - w_ratio)), int(180 * w_ratio + 50), int(255 * w_ratio))
             drone_visual_radius = world_length_to_screen(DRONE_IMPACT_RADIUS)
             pygame.draw.circle(self.screen, d_color, (px, py), drone_visual_radius)
 
-        # 6. Overlay Testo / Collisioni
+        # 6. Overlay collisioni
         col_text = f"collisions_step={self.step_collisions} total={self.total_collisions}"
         ren = self.font.render(col_text, True, (255, 255, 0))
         self.screen.blit(ren, (10, 10))
@@ -994,17 +937,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--random-fires",
         action="store_true",
-        help=f"Genera {NUM_FIRES} incendi in posizioni casuali invece della configurazione fissa di default",
+        help=f"Genera {NUM_FIRES} incendi casuali",
     )
     parser.add_argument(
         "--random-stations",
         action="store_true",
-        help=f"Genera {NUM_WATER_STATIONS} stazioni di rifornimento in posizioni casuali invece della configurazione fissa di default",
+        help=f"Genera {NUM_WATER_STATIONS} stazioni idriche casuali",
     )
     parser.add_argument(
         "--log",
         action="store_true",
-        help="Abilita il logging dettagliato delle collisioni (forze, velocità, ecc.); disattivato di default per performance",
+        help="Abilita il logging delle collisioni",
     )
     return parser
 
@@ -1030,7 +973,6 @@ def run_simulation(
 
         running = True
         while running:
-            # Gestione Eventi Tastiera/Finestra
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
