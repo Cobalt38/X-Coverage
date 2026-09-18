@@ -67,10 +67,10 @@ AVOID_FORCE = 2.0               # Intensità evitamento
 EMERGENCY_AVOID_DISTANCE = 0.8  # Soglia locale di emergenza
 
 # Fire extinguishing & Saturation Behavior
-FIRE_HEALTH = 100.0
+FIRE_HEALTH = 200.0
 FIRE_SPAWN_THRESHOLD = 1.20        # Soglia vita per propagazione incendio
 FIRE_SPAWN_PROB_PER_STEP = 0.003   # Probabilità per passo di generare un nuovo incendio
-FIRE_SPAWN_OFFSET_MAX = 2.0        # Raggio massimo offset incendio figlio
+FIRE_SPAWN_OFFSET_MAX = 3.0        # Raggio massimo offset incendio figlio
 FIRE_SPAWN_INITIAL_HEALTH = 0.15   # Vita iniziale incendio figlio
 DRONE_WATER_CAPACITY = 20.0
 DRONE_WATER_FLOW_RATE = 5.0 
@@ -477,42 +477,41 @@ class Drone:
             self._move_toward_station()
             return
 
-        # Rilevamento incendio e controllo saturazione
+        # 1. Rilevamento incendio locale/scoperto
         selected_fire = self._select_fire()
+        
         if selected_fire is not None:
             active_drones = self._count_drones_on_fire(selected_fire)
-            
-            # Se l'incendio è saturo e siamo vicini, rimbalza radialmente via
+            fire_arr = np.array(selected_fire, dtype=float)
+            dist_to_fire = np.linalg.norm(self.position - fire_arr)
+
+            # 2. SE L'INCENDIO È SATURO: Rimbalzo radiale
             if active_drones >= MAX_DRONES_ON_FIRE and self.fire_target != selected_fire:
-                fire_arr = np.array(selected_fire)
-                dist_to_fire = np.linalg.norm(self.position - fire_arr)
-                
                 if dist_to_fire <= FIRE_DETECTION_RADIUS:
-                    # Direzione radiale di allontanamento
                     bounce_dir = normalize(self.position - fire_arr)
                     if np.linalg.norm(bounce_dir) < 1e-6:
                         bounce_dir = normalize(self.velocity) if np.linalg.norm(self.velocity) > 1e-6 else np.array([1.0, 0.0])
                     
-                    # Proietta un nuovo target di esplorazione via dal fuoco
-                    self.target = self.position + bounce_dir * (FIRE_DETECTION_RADIUS * 2.0)
+                    # Applica la spinta usando la variabile di configurazione
+                    self.target = self.position + bounce_dir * FIRE_SATURATION_BOUNCE_FORCE
                     self.target[0] = np.clip(self.target[0], 0.0, self.world.area_width)
                     self.target[1] = np.clip(self.target[1], 0.0, self.world.area_height)
                     self.anchor_target = self.target.copy()
                     self.fire_target = None
             else:
-                # Può intervenire
+                # 3. INCENDIO DISPONIBILE: Ingaggio
                 self.fire_target = selected_fire
-                self.target = np.array(selected_fire, dtype=float)
-                self.original_target = self.target.copy()
+                
+                # Se siamo già nel raggio di spegnimento, agganciamo il target direttamente sotto il drone
+                if dist_to_fire <= FIRE_EXTINGUISH_RADIUS:
+                    self.target = self.position.copy()
+                    self.anchor_target = self.position.copy()
+                    self.target_velocity[:] = 0.0
+                else:
+                    self.target = fire_arr.copy()
+                    self.original_target = fire_arr.copy()
 
-        # Se sta spegnendo, blocca il movimiento ed evita lo "jittering"
-        if self.is_extinguishing_fire():
-            self.velocity[:] = 0.0
-            self.acceleration[:] = 0.0
-            self.desired_velocity[:] = 0.0
-            self.pid.reset()
-            return
-
+        # 4. Integrazione del movimento standard tramite PID
         self._update_target_position(neighbors)
         self._integrate_motion(self._compute_desired_velocity_with_avoidance())
         self._maybe_resume_exploration()
