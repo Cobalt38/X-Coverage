@@ -1,8 +1,6 @@
 """
 X-Coverage — simulazione 2D di uno sciame decentralizzato di droni antincendio.
 
-Versione unificata di pymain.py (base funzionale) e main.py (correzioni strutturali).
-
 Architettura: "controllo multi-agente decentralizzato simulato in un ambiente centralizzato".
     - SimulationWorld / SwarmSimulation: fisica, incendi, canale radio, statistiche (conoscenza globale,
       perché sono il simulatore) — non prendono MAI decisioni operative per conto dei droni.
@@ -31,8 +29,8 @@ AREA_HEIGHT = 12.0
 SIM_TIME_STEP = 0.01
 RANDOM_SEED = 42
 
-WINDOW_WIDTH = 1536  # finestra Pygame
-WINDOW_HEIGHT = 921  # aspect ratio 20:12
+WINDOW_WIDTH = 1600  # finestra Pygame
+WINDOW_HEIGHT = 960  # aspect ratio 20:12
 
 SHOW_FORCE_VECTORS = False         # default di --show-vectors (tasto V per cambiarlo a runtime)
 SHOW_DRONES_COMMUNICATION = False  # default di --comm (tasto C per cambiarlo a runtime)
@@ -268,8 +266,7 @@ class CommunicationModule:
 
     neighbors: messaggi già committati e utilizzabili nel round corrente.
     _incoming: messaggi ricevuti durante il broadcast e destinati al prossimo commit.
-    Così tutti i droni, in un round, usano informazioni dello stesso istante logico
-    (il drone 0 che si muove per primo non "anticipa" nulla al drone 11).
+    Così tutti i droni, in un round, usano informazioni dello stesso istante logico.
     """
 
     def __init__(self, drone: 'Drone'):
@@ -335,7 +332,7 @@ class SimulationWorld:
         return self._fires
 
     def refresh_neighbors(self) -> Dict[int, List['Drone']]:
-        """Modello di propagazione radio: chi riceve i messaggi di chi (raggio COMMUNICATION_RADIUS).
+        """Modello di propagazione radio: chi può ricevere i messaggi di chi (raggio COMMUNICATION_RADIUS).
 
         È fisica del canale, non coordinamento: il drone non riceve mai questa mappa, solo i messaggi.
         """
@@ -443,6 +440,11 @@ class Drone:
         self.extinguished_fires: Dict[FirePos, int] = {}
         self.saturated_fires: Dict[FirePos, int] = {}  # incendio -> step residui di esclusione
         self.fire_target: Optional[FirePos] = None
+        # Compito interrotto dal rifornimento: intenzione PRIVATA, non comunicata e senza aging.
+        # Non è conoscenza sul mondo (quella sta in known_fires, con la sua età), è solo
+        # "dove stavo lavorando prima di andare a fare acqua".
+        self.interrupted_fire: Optional[FirePos] = None
+        self.interrupted_target: Optional[np.ndarray] = None
         self.idle_steps = 0
         self.desired_velocity = np.zeros(2, dtype=float)
         self.last_applied_force = np.zeros(2, dtype=float)
@@ -586,7 +588,7 @@ class Drone:
         """
         self.fire_target = fire_pos
         fire_arr = np.array(fire_pos, dtype=float)
-        bearing = normalize(self.position - fire_arr)
+        bearing = normalize(self.position - fire_arr) # vettore radiale dal fuoco al drone, ma potrebbe essere nullo se il drone è sopra il fuoco
         if np.linalg.norm(bearing) < 1e-6:
             bearing = unit_from_angle(self.idx * GOLDEN_ANGLE)
         self.target = fire_arr + bearing * FIRE_WORK_RADIUS
@@ -685,7 +687,7 @@ class Drone:
         """Evitamento collisioni tra droni: campo potenziale predittivo + livello di emergenza.
 
         Livello 1 (predittivo): per ogni vicino calcola il punto di massimo avvicinamento (CPA)
-            nell'intervallo [0, AVOID_LOOKAHEAD], non la distanza al solo istante finale:
+            nell'intervallo [0, AVOID_LOOKAHEAD]:
                 t_ca = clip(-(rel·v_rel) / |v_rel|², 0, T)      closest = rel + v_rel * t_ca
             Se |closest| < margine di sicurezza -> repulsione lungo closest (allarga la distanza di
             passaggio, cioè spinge di lato) + smorzamento della velocità di avvicinamento.
@@ -698,8 +700,9 @@ class Drone:
         predictive = np.zeros(2, dtype=float)
         emergency_vector = np.zeros(2, dtype=float)
         emergency = False
-        safety_margin = AVOID_MIN_DISTANCE + SAFE_DISTANCE_K_VEL * np.linalg.norm(self.velocity)
+        safety_margin = AVOID_MIN_DISTANCE + SAFE_DISTANCE_K_VEL * np.linalg.norm(self.velocity) # più veloce il drone -> maggiore il margine necessario ad evitare collisioni
 
+        # Per ogni vicino, calcola il punto di massimo avvicinamento e la distanza attuale.
         for other_idx, state in self._neighbor_messages.items():
             rel = self.position - state.position
             distance = np.linalg.norm(rel)
@@ -707,12 +710,12 @@ class Drone:
             if distance > 1e-9:
                 unit_now = rel / distance
             else:
-                # Sovrapposizione esatta: direzioni opposte per i due droni (prima veniva ignorata)
+                # Sovrapposizione esatta: direzioni opposte per i due droni
                 unit_now = np.array([1.0, 0.0]) if self.idx < other_idx else np.array([-1.0, 0.0])
 
             # Tempo e distanza di massimo avvicinamento
             speed_sq = float(np.dot(v_rel, v_rel))
-            t_ca = float(np.clip(-np.dot(rel, v_rel) / speed_sq, 0.0, AVOID_LOOKAHEAD)) if speed_sq > 1e-12 else 0.0
+            t_ca = float(np.clip(-np.dot(rel, v_rel) / speed_sq, 0.0, AVOID_LOOKAHEAD)) if speed_sq > 1e-12 else 0.0 # tempo di massimo avvicinamento predetto, ma se v_rel è nullo allora t_ca = 0
             closest = rel + v_rel * t_ca
             closest_distance = np.linalg.norm(closest)
             if closest_distance > 1e-6:
@@ -766,8 +769,7 @@ class Drone:
         self.position[1] = np.clip(self.position[1], 0.0, self.world.area_height)
 
     def _maybe_resume_exploration(self) -> None:
-        # Nessun compito attivo e target raggiunto -> dopo MAX_IDLE_STEPS nuovo target casuale.
-        # (Prima serviva anche "not known_fires": un drone che conosceva solo incendi saturi restava fermo.)
+        """Nessun compito attivo e target raggiunto -> dopo MAX_IDLE_STEPS nuovo target casuale."""
         if not self.reloading and self.fire_target is None and self.has_reached_target():
             self.idle_steps += 1
             if self.idle_steps > MAX_IDLE_STEPS:
@@ -789,7 +791,6 @@ class Drone:
     def _station_priority(self, station_slot: Optional[int], position: np.ndarray, claim_age: int, idx: int) -> Tuple[int, int, int]:
         """Chiave di priorità (minore = prima). Chi è già in servizio non viene scalzato;
         poi FIFO: chi ha richiesto il rifornimento da più tempo (claim_age maggiore) passa prima.
-        (Prima era min(claim_age): l'ultimo arrivato aveva la precedenza e interrompeva chi stava rifornendo.)
         """
         in_service = station_slot is not None and self._is_in_station_service_area(position, self.water_station_idx)
         return (0 if in_service else 1, -claim_age, idx)
@@ -847,12 +848,16 @@ class Drone:
                 self.station_slot = free[0]
 
     def _maybe_start_reload(self) -> None:
+        """Se il drone ha poca acqua e non sta già rifornendo, sceglie una stazione e inizia a dirigersi verso di essa."""
         if self.reloading or self.is_extinguishing_fire() or self.water > LOW_WATER_THRESHOLD:
             return
         self.reloading = True
         self.water_station_idx = self._select_water_station()
         self.refuel_claim_age = 0
         self.station_slot = None
+        # Salva il compito interrotto prima di sovrascrivere il target con la stazione.
+        self.interrupted_fire = self.fire_target
+        self.interrupted_target = self.target.copy()
         self.fire_target = None
         self.original_target = self.world.water_stations[self.water_station_idx].copy()
         self.target = self.original_target.copy()
@@ -887,7 +892,6 @@ class Drone:
 
     def try_reload(self) -> None:
         # Si rifornisce solo chi è stato ammesso (ha uno slot) ed è nello slot, dentro l'area di servizio.
-        # (Prima bastava has_reached_target(): anche i droni in coda si rifornivano dal punto di attesa.)
         if not self.reloading or self.station_slot is None or not self.has_reached_target():
             return
         if not self._is_in_station_service_area(self.position, self.water_station_idx):
@@ -901,10 +905,33 @@ class Drone:
             self.station_slot = None
             self.target_velocity[:] = 0.0
             self.fire_target = None
-            self.target = self._sample_exploration_target()
+            # Riprende il compito interrotto invece di ripartire da un punto casuale.
+            self.target = self._resume_point_after_reload()
             self.original_target = self.target.copy()
             self.anchor_target = self.target.copy()
+            self.interrupted_fire = None
+            self.interrupted_target = None
             self.pid.reset()
+
+    def _resume_point_after_reload(self) -> np.ndarray:
+        """Da dove riparte il drone dopo il pieno.
+
+        Priorità:
+            1. l'incendio che stava gestendo, se non è arrivata una smentita;
+            2. il punto in cui si trovava il suo target quando è scattato il rifornimento;
+            3. un nuovo target di esplorazione casuale.
+
+        L'incendio NON viene reinserito in known_fires: il drone non ha osservato niente di nuovo,
+        ha solo l'intenzione di tornare a controllare. Il viaggio di ritorno può durare più di
+        FIRE_MEMORY_TTL_S, quindi senza questo l'informazione andrebbe persa proprio mentre il
+        drone è fermo in coda. Arrivato entro FIRE_DETECTION_RADIUS, sense_environment() conferma
+        (known_fires[p] = 0) oppure falsifica (extinguished_fires[p] = 0).
+        """
+        if self.interrupted_fire is not None and self.interrupted_fire not in self.extinguished_fires:
+            return np.array(self.interrupted_fire, dtype=float)
+        if self.interrupted_target is not None:
+            return self.interrupted_target.copy()
+        return self._sample_exploration_target()
 
     # --------------------------------------------------------
     # Interazione con gli incendi
