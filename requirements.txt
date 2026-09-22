@@ -1,4 +1,2 @@
-pybullet
 numpy
-Pillow
-pygame
+pygame-ce
