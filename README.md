@@ -220,12 +220,21 @@ pesante del messaggio. Il tasto `H` la mostra: in blu ciò che nessuno guarda da
 | Missioni fuori controllo | 3 su 30 | **0 su 30** | 4 su 30 |
 | Incendi mai avvistati | 3.6 | **1.4** | 6.8 |
 
-**Nel caso normale la perlustrazione sistematica non serve**: vince in appena 13 casi su 30 e la
-mediana è identica. **Serve a non perdere le partite che si perdono male**: le tre simulazioni
-peggiori passano da ~900 a ~170, e le tre missioni finite fuori controllo diventano zero. Ogni tanto
-la ricerca casuale lascia un angolo senza controllo abbastanza a lungo perché un incendio ci cresca
-indisturbato. Ricordarsi dove si è guardato non migliora la media: **elimina la coda** — ed è il tipo
-di conclusione che una media da sola nasconde (infatti sulle medie il test dà p ≈ 0.2).
+**Quasi sempre le due strategie si equivalgono.** Mettendo a confronto le stesse trenta partite una
+per una, la copertura uniforme fa meglio della ricerca casuale in 13 casi su 30: un pareggio. E la
+partita tipica è la stessa — è quello che dice la riga della mediana, 79 contro 85: metà delle
+simulazioni sta sotto quel valore con l'una e con l'altra.
+
+**La differenza sta nelle poche partite che vanno male.** Ogni tanto la ricerca casuale lascia un
+angolo senza controllo abbastanza a lungo perché un incendio ci cresca indisturbato, e da lì la
+situazione degenera. Nelle tre simulazioni peggiori il fuoco acceso arriva a ~900 con la ricerca
+casuale e si ferma a ~170 con la copertura; le tre missioni finite fuori controllo diventano zero.
+
+**Per questo la media, da sola, inganna.** Il 164 contro 91 della prima riga non vuol dire che la
+copertura faccia il doppio in una partita qualsiasi: vuol dire che toglie di mezzo i tre disastri che
+alzavano la media della ricerca casuale. È anche il motivo per cui il test statistico non dichiara
+nessuna differenza (p ≈ 0.2, cioè "potrebbe essere fortuna"): un vantaggio che si manifesta in tre
+partite su trenta ha bisogno di molte più ripetizioni per essere dimostrato.
 
 **Concentrarsi sulle zone di valore peggiora le cose**: la variante pesata presidia benissimo gli
 hotspot ma abbandona il resto, dove gli incendi si accendono lo stesso, e ne lascia 6.8 per partita

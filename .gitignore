@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Archivi di sessione e trascrizioni: non vanno in un repo pubblico
+*.tar.gz
+*.jsonl
