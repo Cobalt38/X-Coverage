@@ -7,14 +7,14 @@ Parametri diversi dal default: NUM_FIRES = 5, FIRE_GROWTH_RATE = 0.6. Ogni simul
 
 **Varianti.** «urti innocui» (COLLISION_DAMAGE = False); «urti con danni» (nessuno); «urti con danni, senza evitamento» (AVOIDANCE_MODE = none); «urti sempre fatali» (COLLISION_TOTAL_LOSS_SPEED = 0.0). Il riferimento è «urti innocui».
 
-**Metodo.** 12 simulazioni per variante, con i seed da 1 a 12, gli stessi per tutte le varianti: ogni variante affronta quindi esattamente le stesse situazioni di partenza. Eseguito il 23/09/2026 alle 11:36 in 5.2 minuti (codice: commit 9b738fc con modifiche non salvate).
+**Metodo.** 12 simulazioni per variante, con i seed da 1 a 12, gli stessi per tutte le varianti: ogni variante affronta quindi esattamente le stesse situazioni di partenza. Eseguito il 23/09/2026 alle 13:56 in 3.4 minuti (codice: commit fb98452 con modifiche non salvate).
 
 ## In breve
 
 ⚠ Poche simulazioni per variante: anche differenze grandi possono non risultare significative. Per conclusioni affidabili servono almeno 20 simulazioni (--runs 20).
 
 - **urti con danni**: nessuna differenza significativa rispetto a «urti innocui».
-- **urti con danni, senza evitamento**: missione riuscita 75% → 0% (peggiore); urti 0 → 5.42 (peggiore); droni fuori uso 0 → 10.8 (peggiore). Cambiano in modo significativo anche altre 22 misure (vedi tabelle).
+- **urti con danni, senza evitamento**: nessuna differenza significativa rispetto a «urti innocui».
 - **urti sempre fatali**: nessuna differenza significativa rispetto a «urti innocui».
 
 ## Risultati
@@ -25,75 +25,77 @@ Ogni cella: media sulle simulazioni e, tra parentesi, l'intervallo di confidenza
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
-| Missione riuscita | 75% (47%–91%) | 75% (47%–91%) | 0% (0%–24%) ▼ | 75% (47%–91%) |
-| Incendi fuori controllo | 25% (8.9%–53%) | 25% (8.9%–53%) | 58% (32%–81%) | 25% (8.9%–53%) |
-| Tempo per spegnere tutto [s] | 147 (124–171) | 147 (124–171) | – | 147 (124–171) |
-| Danno degli incendi [vita·s] | 105 457 (58 307–152 607) | 105 457 (58 307–152 607) | 146 689 (93 280–200 098) | 105 457 (58 307–152 607) |
-| Incendi nati dalla propagazione | 11.9 (0–24.6) | 11.9 (0–24.6) | 26.2 (14.9–37.4) | 11.9 (0–24.6) |
+| Missione riuscita | 92% (65%–99%) | 92% (65%–99%) | 8.3% (1.5%–35%) | 92% (65%–99%) |
+| Incendi fuori controllo | 8.3% (1.5%–35%) | 8.3% (1.5%–35%) | 25% (8.9%–53%) | 8.3% (1.5%–35%) |
+| Tempo per spegnere tutto [s] | 142 (126–159) [su 11] | 142 (126–159) [su 11] | 394 [su 1] | 142 (126–159) [su 11] |
+| Danno degli incendi [vita·s] | 90 134 (28 932–151 336) | 90 134 (28 932–151 336) | 119 282 (58 234–180 329) | 90 134 (28 932–151 336) |
+| Fuoco acceso in media [vita] | 523 (333–713) | 523 (333–713) | 804 (635–973) | 523 (333–713) |
+| Incendi nati dalla propagazione | 5.17 (0–16) | 5.17 (0–16) | 13.8 (2.59–25.1) | 5.17 (0–16) |
 | Incendi nati da soli | 0 (0–0) | 0 (0–0) | 0 (0–0) | 0 (0–0) |
-| Picco di incendi accesi | 14.2 (3.99–24.5) | 14.2 (3.99–24.5) | 29.2 (18.9–39.6) | 14.2 (3.99–24.5) |
-| Ritardo di avvistamento [s] | 6.65 (1.62–11.7) | 6.65 (1.62–11.7) | 4.21 (1.02–7.4) | 6.65 (1.62–11.7) |
-| Incendi mai avvistati | 2.92 (0–6.68) | 2.92 (0–6.68) | 21.9 (12.6–31.3) ▼ | 2.92 (0–6.68) |
-| Ritardo di intervento [s] | 5.06 (1.84–8.29) | 5.06 (1.84–8.29) | 3.51 (1.77–5.25) | 5.06 (1.84–8.29) |
+| Picco di incendi accesi | 8.08 (1.49–14.7) | 8.08 (1.49–14.7) | 17.8 (7.38–28.3) | 8.08 (1.49–14.7) |
+| Ritardo di avvistamento [s] | 4.62 (0.963–8.27) | 4.62 (0.963–8.27) | 3.51 (1.69–5.32) | 4.62 (0.963–8.27) |
+| Incendi mai avvistati | 0 (0–0) | 0 (0–0) | 12.4 (2.34–22.5) | 0 (0–0) |
+| Ritardo di intervento [s] | 4.37 (0–9.15) | 4.37 (0–9.15) | 2.33 (0.894–3.77) | 4.37 (0–9.15) |
 
 ### Sicurezza
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
-| Urti | 0 (0–0) | 0 (0–0) | 5.42 (5.09–5.74) ▼ | 0 (0–0) |
-| Droni fuori uso | 0 (0–0) | 0 (0–0) | 10.8 (10.2–11.5) ▼ | 0 (0–0) |
-| Quasi-urti | 0.75 (0.0268–1.47) | 0.75 (0.0268–1.47) | 29.1 (23.3–34.9) ▼ | 0.75 (0.0268–1.47) |
-| Distanza minima tra due droni [m] | 0.795 (0.648–0.941) | 0.795 (0.648–0.941) | 0.0882 (0.0846–0.0919) ▼ | 0.795 (0.648–0.941) |
-| Tempo in emergenza | 0.1% (0%–0.2%) | 0.1% (0%–0.2%) | 0% (0%–0%) ▲ | 0.1% (0%–0.2%) |
+| Urti | 0 (0–0) | 0 (0–0) | 5.67 (5.35–5.98) | 0 (0–0) |
+| Droni fuori uso | 0 (0–0) | 0 (0–0) | 11.3 (10.7–12) | 0 (0–0) |
+| Quasi-urti | 0.417 (0–0.841) | 0.417 (0–0.841) | 28.2 (21.6–34.8) | 0.417 (0–0.841) |
+| Distanza minima tra due droni [m] | 0.803 (0.642–0.963) | 0.803 (0.642–0.963) | 0.0913 (0.0882–0.0944) | 0.803 (0.642–0.963) |
+| Tempo in emergenza | 0.0% (0%–0.1%) | 0.0% (0%–0.1%) | 0% (0%–0%) | 0.0% (0%–0.1%) |
 
 ### Uso del tempo
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
-| Perlustrazione | 5.3% (2.7%–7.8%) | 5.3% (2.7%–7.8%) | 3.3% (2.3%–4.4%) | 5.3% (2.7%–7.8%) |
-| In volo verso un incendio | 32% (29%–34%) | 32% (29%–34%) | 7.0% (5.0%–8.9%) ◆ | 32% (29%–34%) |
-| Spegnimento | 14% (13%–16%) | 14% (13%–16%) | 9.5% (7.5%–11%) ▼ | 14% (13%–16%) |
-| In volo verso una stazione | 22% (20%–24%) | 22% (20%–24%) | 3.3% (2.1%–4.6%) ▲ | 22% (20%–24%) |
-| In coda alla stazione | 20% (17%–23%) | 20% (17%–23%) | 4.8% (3.9%–5.6%) ▲ | 20% (17%–23%) |
-| Rifornimento | 6.7% (6.0%–7.4%) | 6.7% (6.0%–7.4%) | 4.2% (3.4%–5.1%) ◆ | 6.7% (6.0%–7.4%) |
-| Fuori uso | 0% (0%–0%) | 0% (0%–0%) | 68% (61%–75%) ▼ | 0% (0%–0%) |
+| Perlustrazione | 4.5% (3.4%–5.7%) | 4.5% (3.4%–5.7%) | 5.0% (1.8%–8.1%) | 4.5% (3.4%–5.7%) |
+| In volo verso un incendio | 33% (31%–35%) | 33% (31%–35%) | 7.7% (6.3%–9.2%) | 33% (31%–35%) |
+| Spegnimento | 15% (14%–16%) | 15% (14%–16%) | 11% (7.8%–13%) | 15% (14%–16%) |
+| In volo verso una stazione | 21% (18%–24%) | 21% (18%–24%) | 4.2% (3.2%–5.3%) | 21% (18%–24%) |
+| In coda alla stazione | 20% (17%–22%) | 20% (17%–22%) | 5.3% (3.8%–6.7%) | 20% (17%–22%) |
+| Rifornimento | 7.0% (6.5%–7.5%) | 7.0% (6.5%–7.5%) | 4.5% (3.3%–5.7%) | 7.0% (6.5%–7.5%) |
+| Fuori uso | 0% (0%–0%) | 0% (0%–0%) | 63% (54%–72%) | 0% (0%–0%) |
 
 ### Lavoro ed efficienza
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
-| Equità del lavoro | 0.961 (0.939–0.983) | 0.961 (0.939–0.983) | 0.422 (0.331–0.513) ▼ | 0.961 (0.939–0.983) |
-| Sovraffollamento sugli incendi [s] | 0.0917 (0–0.229) | 0.0917 (0–0.229) | 0.194 (0–0.469) | 0.0917 (0–0.229) |
-| Attesa media in coda [s] | 6.11 (5.42–6.81) | 6.11 (5.42–6.81) | 2.36 (2.18–2.53) ▲ | 6.11 (5.42–6.81) |
-| Attesa massima in coda [s] | 21.8 (17.2–26.3) | 21.8 (17.2–26.3) | 4.96 (3.61–6.32) ▲ | 21.8 (17.2–26.3) |
-| Distanza percorsa [m] | 881 (732–1 030) | 881 (732–1 030) | 226 (193–260) ▲ | 881 (732–1 030) |
-| Sforzo di controllo [m²/s³] | 954 (804–1 103) | 954 (804–1 103) | 125 (109–141) ▲ | 954 (804–1 103) |
-| Rimbalzi da incendi affollati | 1.42 (0.728–2.11) | 1.42 (0.728–2.11) | 0.667 (0.103–1.23) | 1.42 (0.728–2.11) |
+| Equità del lavoro | 0.944 (0.896–0.991) | 0.944 (0.896–0.991) | 0.986 (0.96–1.01) [su 4] | 0.944 (0.896–0.991) |
+| Sovraffollamento sugli incendi [s] | 0 (0–0) | 0 (0–0) | 0.0508 (0–0.111) | 0 (0–0) |
+| Attesa media in coda [s] | 5.79 (5.12–6.46) | 5.79 (5.12–6.46) | 2.53 (2.32–2.73) | 5.79 (5.12–6.46) |
+| Attesa massima in coda [s] | 19 (15.2–22.9) | 19 (15.2–22.9) | 4.73 (3.61–5.86) | 19 (15.2–22.9) |
+| Distanza per drone [m] | 71.6 (56.7–86.4) | 71.6 (56.7–86.4) | 72 (40–104) | 71.6 (56.7–86.4) |
+| Sforzo di controllo [m²/s³] | 0.492 (0.469–0.514) | 0.492 (0.469–0.514) | 0.261 (0.251–0.271) | 0.492 (0.469–0.514) |
+| Rimbalzi da incendi affollati | 2 (1.23–2.77) | 2 (1.23–2.77) | 0.583 (0.0113–1.16) | 2 (1.23–2.77) |
 
 ### Comunicazione e conoscenza
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
 | Messaggi persi | 0% (0%–0%) | 0% (0%–0%) | 0% (0%–0%) | 0% (0%–0%) |
-| Vicini radio per drone | 2.8 (2.5–3.09) | 2.8 (2.5–3.09) | 2.12 (1.8–2.44) ▼ | 2.8 (2.5–3.09) |
-| Sciame tutto connesso | 16% (8.3%–23%) | 16% (8.3%–23%) | 0% (0%–0%) ▼ | 16% (8.3%–23%) |
-| Incendi noti ai droni | 78% (69%–87%) | 78% (69%–87%) | 38% (26%–50%) ▼ | 78% (69%–87%) |
-| Incendi fantasma per drone | 0.0778 (0.0385–0.117) | 0.0778 (0.0385–0.117) | 0.299 (0.134–0.464) ▼ | 0.0778 (0.0385–0.117) |
-| Età delle informazioni [s] | 0.391 (0.172–0.609) | 0.391 (0.172–0.609) | 0.613 (0.366–0.86) | 0.391 (0.172–0.609) |
+| Vicini radio per drone | 2.68 (2.49–2.87) | 2.68 (2.49–2.87) | 0.954 (0.601–1.31) | 2.68 (2.49–2.87) |
+| Sciame tutto connesso | 10% (7.4%–13%) | 10% (7.4%–13%) | 0% (0%–0%) | 10% (7.4%–13%) |
+| Incendi noti ai droni | 84% (80%–89%) | 84% (80%–89%) | 43% (31%–54%) | 84% (80%–89%) |
+| Incendi fantasma per drone | 0.101 (0.0284–0.174) | 0.101 (0.0284–0.174) | 0.0299 (0–0.0647) | 0.101 (0.0284–0.174) |
+| Età delle informazioni [s] | 0.343 (0.139–0.546) | 0.343 (0.139–0.546) | 1.15 (0.633–1.66) | 0.343 (0.139–0.546) |
 
 ### Perlustrazione
 
 | Misura | urti innocui | urti con danni | urti con danni, senza evitamento | urti sempre fatali |
 |---|---|---|---|---|
-| Obsolescenza del terreno [s] | 27.5 (23.2–31.7) | 27.5 (23.2–31.7) | 47.2 (35.6–58.9) ▼ | 27.5 (23.2–31.7) |
-| Obsolescenza delle zone importanti [s] | 25.1 (20–30.3) | 25.1 (20–30.3) | 47 (35.4–58.6) ▼ | 25.1 (20–30.3) |
-| Obsolescenza del resto dell'area [s] | 32.2 (28.5–35.9) | 32.2 (28.5–35.9) | 48.6 (35.3–62) ▼ | 32.2 (28.5–35.9) |
-| Obsolescenza della zona peggiore [s] | 159 (137–182) | 159 (137–182) | 142 (109–176) | 159 (137–182) |
+| Obsolescenza del terreno [s] | 27.1 (19.2–35.1) | 27.1 (19.2–35.1) | 45.1 (23.6–66.5) | 27.1 (19.2–35.1) |
+| Obsolescenza delle zone importanti [s] | 24.7 (14.8–34.6) | 24.7 (14.8–34.6) | 42.7 (21.3–64) | 24.7 (14.8–34.6) |
+| Obsolescenza del resto dell'area [s] | 31.8 (27.1–36.6) | 31.8 (27.1–36.6) | 50.8 (26.8–74.8) | 31.8 (27.1–36.6) |
+| Obsolescenza della zona peggiore [s] | 152 (125–179) | 152 (125–179) | 151 (81.3–221) | 152 (125–179) |
 
 ## Come leggere questi numeri
 
 - **Intervallo di confidenza al 95%**: ripetendo l'esperimento all'infinito, la media vera cadrebbe quasi sempre dentro quell'intervallo. Se è largo, servono più simulazioni.
-- **▲ ▼ ◆**: la differenza rispetto al riferimento supera il test statistico (probabilità che sia fortuna sotto 5%). Le simulazioni sono confrontate a coppie con lo stesso seed. Attenzione: "reale" non vuol dire "grande" — guardare anche di quanto cambia la media.
+- **▲ ▼ ◆**: la differenza rispetto al riferimento supera il test statistico (probabilità che sia fortuna sotto 5%). Le simulazioni sono confrontate a coppie con lo stesso seed, e le probabilità sono corrette con il metodo di Holm per il numero di confronti fatti in questo report: senza quella correzione, una decina di marcatori sarebbero falsi allarmi dovuti al solo numero di test. Attenzione: "reale" non vuol dire "grande" — guardare anche di quanto cambia la media.
+- **[su N]** accanto a un valore: quella misura non era definita in tutte le simulazioni (per esempio il tempo di spegnimento esiste solo per le missioni riuscite), quindi media e intervallo si basano su N simulazioni invece che su tutte.
 - **Tempo per spegnere tutto** è calcolato solo sulle missioni riuscite: va letto insieme a «Missione riuscita», altrimenti una variante che fallisce spesso sembra veloce.
 - Le simulazioni finiscono in momenti diversi (chi riesce prima si ferma prima), quindi le misure che si accumulano nel tempo — danno, distanza, sforzo — vanno confrontate con prudenza tra varianti con esiti molto diversi.
 
@@ -102,7 +104,8 @@ Ogni cella: media sulle simulazioni e, tra parentesi, l'intervallo di confidenza
 - **Missione riuscita** (`mission_complete`): Tutti gli incendi sono stati spenti entro il tempo massimo.
 - **Incendi fuori controllo** (`fire_overrun`): La simulazione è stata interrotta perché gli incendi accesi erano troppi.
 - **Tempo per spegnere tutto** (`extinction_time_s`): Secondi fino all'ultimo incendio spento. Ha senso solo per le missioni riuscite.
-- **Danno degli incendi** (`fire_damage`): Somma, istante per istante, della vita di tutti gli incendi accesi: premia chi spegne presto e penalizza chi lascia bruciare.
+- **Danno degli incendi** (`fire_damage`): Somma, istante per istante, della vita di tutti gli incendi accesi. ATTENZIONE: cresce con la durata, e una missione che collassa presto si ferma prima. Per confrontare varianti usare la misura seguente, che è già divisa per il tempo.
+- **Fuoco acceso in media** (`burning_health_mean`): Quanta vita di incendi era accesa in media, istante per istante: il danno diviso per la durata. Confrontabile tra missioni di durata diversa.
 - **Incendi nati dalla propagazione** (`fires_spawned`): Un incendio lasciato crescere troppo ne genera altri vicino a sé.
 - **Incendi nati da soli** (`fires_ignited`): Accensioni spontanee, indipendenti dagli incendi già presenti. Dipendono solo dal seed, quindi a parità di seed sono le stesse per tutte le varianti.
 - **Picco di incendi accesi** (`peak_active_fires`): Il massimo numero di incendi accesi nello stesso momento.
@@ -125,8 +128,8 @@ Ogni cella: media sulle simulazioni e, tra parentesi, l'intervallo di confidenza
 - **Sovraffollamento sugli incendi** (`overcrowding_s`): Secondi in cui su un incendio lavoravano più droni del limite MAX_DRONES_ON_FIRE.
 - **Attesa media in coda** (`queue_wait_mean_s`): Quanto si aspetta, in media, prima di poter caricare acqua.
 - **Attesa massima in coda** (`queue_wait_max_s`): L'attesa più lunga registrata a una stazione.
-- **Distanza percorsa** (`distance_m`): Metri percorsi da tutti i droni insieme.
-- **Sforzo di controllo** (`control_effort`): Quanto i droni hanno accelerato e frenato: approssima il consumo di batteria.
+- **Distanza per drone** (`distance_per_drone_m`): Metri percorsi in media da ogni drone ancora in volo, al netto della durata (metri per drone al secondo × durata). Non ha un verso migliore: volare di più non è né buono né cattivo di per sé.
+- **Sforzo di controllo** (`control_effort_rate`): Quanto ogni drone accelera e frena, al secondo: approssima il consumo di batteria. Diviso per i secondi di volo effettivi, quindi confrontabile tra missioni diverse.
 - **Rimbalzi da incendi affollati** (`saturation_bounces`): Quante volte un drone si è allontanato da un incendio dove era di troppo.
 - **Messaggi persi** (`message_loss`): Quota dei messaggi radio che non sono arrivati a destinazione.
 - **Vicini radio per drone** (`neighbors`): Quanti altri droni sente in media ciascuno.

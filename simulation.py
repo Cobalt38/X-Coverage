@@ -100,7 +100,6 @@ class Simulation:
                                      self.terrain, self.seed)
         self.drones.extend(Drone(idx, self.rng, self.world, self.seed) for idx in range(config.NUM_DRONES))
 
-        self.step_count = 0
         self.collisions = 0              # urti avvenuti (una coppia che entra in contatto conta 1)
         self.contact_steps = 0           # quanto a lungo, in totale, i droni sono rimasti sovrapposti
         self.step_collisions = 0
@@ -110,6 +109,9 @@ class Simulation:
         # Le coppie sono sempre le stesse, nello stesso ordine, anche quando un drone precipita:
         # chi non vola più risulta a distanza infinita, così non conta né come urto né come
         # quasi-urto, ma l'indice di ogni coppia resta stabile per chi confronta un passo con l'altro.
+        # Generatore dedicato ai guasti provocati: separato da tutto il resto.
+        self.failure_rng = random.Random(f"failure-{self.seed}")
+        self._failures_injected = False
         self._pair_first, self._pair_second = np.triu_indices(len(self.drones), k=1)
         self.pair_distances = np.full(len(self._pair_first), np.inf)
 
@@ -119,16 +121,29 @@ class Simulation:
         return Fire(pos=position, health=self.config.FIRE_HEALTH, growth_rate=self.config.FIRE_GROWTH_RATE)
 
     def _default_fires(self) -> List[Fire]:
-        """Tre incendi in posizioni fisse: lo scenario di riferimento, sempre uguale."""
+        """Incendi in posizioni fisse: lo scenario di riferimento, sempre uguale.
+
+        Se ne vengono chiesti più di quanti siano i posti previsti, i restanti sono casuali.
+        """
         width, height = self.config.AREA_WIDTH, self.config.AREA_HEIGHT
-        positions = [(width * 0.20, height * 0.75), (width * 0.50, height * 0.25), (width * 0.80, height * 0.75)]
-        return [self._new_fire(np.array(position, dtype=float)) for position in positions]
+        positions = [(width * 0.20, height * 0.75), (width * 0.50, height * 0.25),
+                     (width * 0.80, height * 0.75), (width * 0.35, height * 0.35),
+                     (width * 0.65, height * 0.80), (width * 0.90, height * 0.40)]
+        wanted = self.config.NUM_FIRES
+        fires = [self._new_fire(np.array(position, dtype=float)) for position in positions[:wanted]]
+        if len(fires) < wanted:
+            fires += self._random_fires()[:wanted - len(fires)]
+        return fires
 
     def _random_fires(self) -> List[Fire]:
         margin = self.config.FIRE_GENERATION_MARGIN
         return [self._new_fire(np.array([self.rng.uniform(margin, self.config.AREA_WIDTH - margin),
                                          self.rng.uniform(margin, self.config.AREA_HEIGHT - margin)], dtype=float))
                 for _ in range(self.config.NUM_FIRES)]
+
+    # I droni estraggono le proprie posizioni iniziali da un generatore personale (vedi Drone):
+    # così cambiare il numero di droni non sposta la sequenza casuale degli incendi, e due varianti
+    # con lo stesso seed affrontano davvero lo stesso scenario.
 
     def _default_stations(self) -> List[np.ndarray]:
         width, height = self.config.AREA_WIDTH, self.config.AREA_HEIGHT
@@ -155,9 +170,14 @@ class Simulation:
     # --- Stato ---------------------------------------------------------------
 
     @property
+    def step_count(self) -> int:
+        """Quanti battiti sono passati. Il tempo lo tiene il clock, non la simulazione."""
+        return self.world.clock.step_count
+
+    @property
     def sim_time(self) -> float:
         """Secondi simulati dall'inizio."""
-        return self.step_count * self.config.SIM_TIME_STEP
+        return self.world.clock.now_s
 
     @property
     def flying_drones(self) -> List[Drone]:
@@ -173,8 +193,10 @@ class Simulation:
                 f"spenti={self.world.extinguished_count}  urti={self.collisions}")
         lost = self.drones_lost
         if lost:
-            with_radio = sum(1 for drone in self.drones if drone.status is DroneStatus.GROUNDED)
-            text += f"  droni fuori uso={lost} (di cui {with_radio} con radio attiva)"
+            silent = sum(1 for drone in self.drones if drone.status is DroneStatus.SILENT)
+            with_radio = sum(1 for drone in self.drones if drone.radio_works and not drone.is_flying)
+            text += f"  droni fuori uso={lost} (radio ancora attiva: {with_radio}"
+            text += f", di cui {silent} che si dichiarano in volo)" if silent else ")"
         return text
 
     # --- Il ciclo -------------------------------------------------------------
@@ -226,15 +248,17 @@ class Simulation:
         return not self.world.fires and self.config.IGNITION_RATE_PER_S <= 0.0
 
     def _advance_one_step(self) -> None:
+        """Un passo: si aggiorna chi sente chi, batte il clock, poi il mondo ne trae le conseguenze.
+
+        Il clock non è un capo che comanda i droni: è solo il tempo che passa. Sono i droni che,
+        alla nascita, hanno chiesto di essere svegliati a ogni battito (vedi Clock in world.py).
+        """
         self.neighbors_now = self.world.refresh_neighbors()
-        for drone in self.drones:
-            drone.broadcast()
-        for drone in self.drones:
-            drone.step()
+        self.world.clock.tick()
         self.world.update_fires(self.rng)
         self._handle_collisions()
+        self._inject_failures()
         self._burn_wrecks()
-        self.step_count += 1
 
     # --- Urti ------------------------------------------------------------------
 
@@ -260,7 +284,11 @@ class Simulation:
         in_flight = np.array([drone.is_flying for drone in self.drones])
         self.pair_distances = np.where(in_flight[first] & in_flight[second], distances, np.inf)
 
+        # Prima si registra tutto quello che è successo, POI si applicano i danni: rompere un drone
+        # gli azzera la velocità, e se lo stesso drone è coinvolto in due urti nello stesso passo il
+        # secondo impatto risulterebbe più lento di quello che è stato davvero.
         still_touching: Set[Tuple[int, int]] = set()
+        new_impacts: List[Tuple[Drone, Drone, float]] = []
         for pair_index in np.flatnonzero(self.pair_distances < self.config.DRONE_IMPACT_RADIUS):
             one, other = self.drones[first[pair_index]], self.drones[second[pair_index]]
             pair = (one.idx, other.idx)
@@ -272,27 +300,48 @@ class Simulation:
 
             self.collisions += 1
             impact_speed = float(np.linalg.norm(one.velocity - other.velocity))
+            new_impacts.append((one, other, impact_speed))
             if self.log_collisions:
                 print(f"[urto] t={self.sim_time:.2f}s droni {pair} "
                       f"distanza={self.pair_distances[pair_index]:.3f} m "
                       f"impatto={impact_speed:.2f} m/s")
-            if self.config.COLLISION_DAMAGE:
+
+        if self.config.COLLISION_DAMAGE:
+            for one, other, impact_speed in new_impacts:
                 radio_destroyed = impact_speed >= self.config.COLLISION_TOTAL_LOSS_SPEED
                 one.break_down(radio_destroyed)
                 other.break_down(radio_destroyed)
 
         self._pairs_touching = still_touching
 
+    def _inject_failures(self) -> None:
+        """Rompe di proposito qualche drone a un istante prefissato (se richiesto dai parametri).
+
+        Serve a studiare la resilienza senza dipendere dal caso: con l'evitamento acceso gli urti
+        non avvengono quasi mai, quindi per sapere come reagisce lo sciame alla perdita di k droni
+        bisogna provocarla. Il momento e le vittime sono decisi da un generatore dedicato, così
+        accendere l'opzione non sposta nient'altro.
+        """
+        if self.config.FAILURE_INJECTION_COUNT <= 0 or self._failures_injected:
+            return
+        if self.sim_time < self.config.FAILURE_INJECTION_TIME_S:
+            return
+        self._failures_injected = True
+        victims = self.failure_rng.sample(self.flying_drones,
+                                          min(self.config.FAILURE_INJECTION_COUNT, len(self.flying_drones)))
+        for victim in victims:
+            victim.break_down(radio_destroyed=self.config.FAILURE_INJECTION_RADIO_OFF)
+
     def _burn_wrecks(self) -> None:
         """Un relitto caduto dentro un incendio brucia: dopo WRECK_BURN_TIME_S tace anche la radio."""
         for drone in self.drones:
-            if drone.status is not DroneStatus.GROUNDED:
+            if drone.status not in (DroneStatus.GROUNDED, DroneStatus.SILENT):
                 continue
             if not self.world.has_active_fire_near(drone.position, self.config.FIRE_EXTINGUISH_RADIUS):
                 continue
             drone.burning_steps += 1
             if drone.burning_steps >= self.config.WRECK_BURN_STEPS:
-                drone.status = DroneStatus.DESTROYED
+                drone.break_down(radio_destroyed=True)
 
 
 # ============================================================

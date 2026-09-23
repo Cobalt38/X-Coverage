@@ -4,7 +4,6 @@ X-Coverage — sciame decentralizzato di droni antincendio.
 PUNTO D'INGRESSO UNICO. Tutto si lancia da qui:
 
     python main.py                                  apre la finestra e guarda lo sciame lavorare
-    python main.py --forces --radio                 mostra anche le forze e i collegamenti radio
     python main.py --random-fires --seed 7          un'altra situazione di partenza
     python main.py --headless --time 120            nessuna finestra, solo il risultato
     python main.py experiment                       elenca gli esperimenti disponibili
@@ -19,7 +18,7 @@ I file del progetto, nell'ordine in cui conviene leggerli:
     experiments.py  le misure, gli esperimenti e i report
     tests.py        le verifiche automatiche
 
-Nella finestra: P pausa, V forze, C radio, H mappa del terreno, Q esci.
+Nella finestra: P pausa, V vettori delle forze, C collegamenti radio, H mappa del terreno, Q esci.
 """
 
 import argparse
@@ -47,13 +46,14 @@ class ProgressPrinter:
 
 EXAMPLES = """esempi:
   python main.py                                  apre la finestra
-  python main.py --forces --radio --seed 7        con forze e collegamenti radio
+  python main.py --seed 7 --random-fires          un'altra situazione di partenza
   python main.py --headless --time 120            nessuna finestra, solo il risultato
   python main.py experiment                       elenca gli esperimenti
   python main.py experiment ablation --runs 30    esegue un esperimento
   python main.py test                             verifiche automatiche
 
-Nella finestra: P pausa, V forze, C radio, H mappa del terreno, Q esci."""
+Nella finestra: P pausa, V forze, C radio, H mappa del terreno, Q esci. Tutto si accende e si
+spegne da lì, non servono opzioni."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,8 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Cambia la situazione di partenza (posizioni di droni, incendi, stazioni)")
     run.add_argument("--random-fires", action="store_true", help="Incendi in posizioni casuali")
     run.add_argument("--random-stations", action="store_true", help="Stazioni idriche in posizioni casuali")
-    run.add_argument("--forces", action="store_true", help="Disegna i vettori delle forze (tasto V)")
-    run.add_argument("--radio", action="store_true", help="Disegna i collegamenti radio (tasto C)")
     run.add_argument("--headless", action="store_true", help="Nessuna finestra: stampa solo lo stato")
     run.add_argument("--time", type=float, default=300.0,
                      help="Durata massima in secondi simulati (solo con --headless)")
@@ -89,7 +87,7 @@ def run_simulation(args: argparse.Namespace) -> MissionResult:
     simulation = Simulation(seed=args.seed, random_fires=args.random_fires,
                             random_stations=args.random_stations, log_collisions=args.log)
     if not args.headless:
-        return run_with_window(simulation, show_forces=args.forces, show_radio=args.radio)
+        return run_with_window(simulation)
 
     result = simulation.run(max_time_s=args.time, watchers=[ProgressPrinter()])
     print(f"\nFINE: {result.describe()}")

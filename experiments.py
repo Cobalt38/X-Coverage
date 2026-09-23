@@ -66,9 +66,13 @@ METRICS: List[Metric] = [
            "La simulazione è stata interrotta perché gli incendi accesi erano troppi."),
     Metric("extinction_time_s", "Tempo per spegnere tutto", "s", "basso", "Missione",
            "Secondi fino all'ultimo incendio spento. Ha senso solo per le missioni riuscite."),
-    Metric("fire_damage", "Danno degli incendi", "vita·s", "basso", "Missione",
-           "Somma, istante per istante, della vita di tutti gli incendi accesi: premia chi "
-           "spegne presto e penalizza chi lascia bruciare."),
+    Metric("fire_damage", "Danno degli incendi", "vita·s", "", "Missione",
+           "Somma, istante per istante, della vita di tutti gli incendi accesi. ATTENZIONE: "
+           "cresce con la durata, e una missione che collassa presto si ferma prima. Per "
+           "confrontare varianti usare la misura seguente, che è già divisa per il tempo."),
+    Metric("burning_health_mean", "Fuoco acceso in media", "vita", "basso", "Missione",
+           "Quanta vita di incendi era accesa in media, istante per istante: il danno diviso per "
+           "la durata. Confrontabile tra missioni di durata diversa."),
     Metric("fires_spawned", "Incendi nati dalla propagazione", "", "basso", "Missione",
            "Un incendio lasciato crescere troppo ne genera altri vicino a sé."),
     Metric("fires_ignited", "Incendi nati da soli", "", "", "Missione",
@@ -123,10 +127,13 @@ METRICS: List[Metric] = [
            "Quanto si aspetta, in media, prima di poter caricare acqua."),
     Metric("queue_wait_max_s", "Attesa massima in coda", "s", "basso", "Lavoro ed efficienza",
            "L'attesa più lunga registrata a una stazione."),
-    Metric("distance_m", "Distanza percorsa", "m", "basso", "Lavoro ed efficienza",
-           "Metri percorsi da tutti i droni insieme."),
-    Metric("control_effort", "Sforzo di controllo", "m²/s³", "basso", "Lavoro ed efficienza",
-           "Quanto i droni hanno accelerato e frenato: approssima il consumo di batteria."),
+    Metric("distance_per_drone_m", "Distanza per drone", "m", "", "Lavoro ed efficienza",
+           "Metri percorsi in media da ogni drone ancora in volo, al netto della durata "
+           "(metri per drone al secondo × durata). Non ha un verso migliore: volare di più non "
+           "è né buono né cattivo di per sé."),
+    Metric("control_effort_rate", "Sforzo di controllo", "m²/s³", "basso", "Lavoro ed efficienza",
+           "Quanto ogni drone accelera e frena, al secondo: approssima il consumo di batteria. "
+           "Diviso per i secondi di volo effettivi, quindi confrontabile tra missioni diverse."),
     Metric("saturation_bounces", "Rimbalzi da incendi affollati", "", "", "Lavoro ed efficienza",
            "Quante volte un drone si è allontanato da un incendio dove era di troppo."),
 
@@ -189,7 +196,7 @@ class Measurements:
         self._previous_water = self._read("water")
 
         # Missione
-        self._fire_records: Dict[int, list] = {id(fire): [fire, 0.0, None, None, fire.health]
+        self._fire_records: Dict[int, list] = {fire.uid: [fire, 0.0, None, None, fire.health]
                                                for fire in simulation.world.fires}
         self._detection_delays: List[float] = []
         self._response_delays: List[float] = []
@@ -207,6 +214,7 @@ class Measurements:
         # Movimento
         self.distance_travelled = 0.0
         self.control_effort = 0.0
+        self.flight_seconds = 0.0      # secondi-drone effettivamente volati (esclude chi è a terra)
 
         # Uso del tempo e code
         self.activity_seconds = {activity: 0.0 for activity in ACTIVITIES}
@@ -251,6 +259,7 @@ class Measurements:
         refilling = water > self._previous_water + 1e-12      # l'acqua cresce solo alla stazione
         flying = np.array([drone.is_flying for drone in simulation.drones])
 
+        self.flight_seconds += float(flying.sum()) * self.dt
         self.distance_travelled += float(np.linalg.norm(positions - self._previous_positions, axis=1).sum())
         self.control_effort += float((accelerations ** 2).sum()) * self.dt
         self.emergency_seconds += sum(1 for drone in simulation.drones
@@ -272,12 +281,12 @@ class Measurements:
                       flying: np.ndarray) -> np.ndarray:
         """Aggiorna la storia di ogni incendio. Restituisce quali droni stanno spegnendo."""
         fires = self.simulation.world.fires
-        alive_ids = {id(fire) for fire in fires}
+        alive_ids = {fire.uid for fire in fires}
         for fire_id in [fire_id for fire_id in self._fire_records if fire_id not in alive_ids]:
             del self._fire_records[fire_id]                 # spento: esce dal registro
         for fire in fires:
-            if id(fire) not in self._fire_records:
-                self._fire_records[id(fire)] = [fire, now, None, None, fire.health]   # appena nato
+            if fire.uid not in self._fire_records:
+                self._fire_records[fire.uid] = [fire, now, None, None, fire.health]   # appena nato
 
         if not fires:
             if self.extinction_time is None and self.config.IGNITION_RATE_PER_S <= 0.0:
@@ -291,7 +300,7 @@ class Measurements:
         watering = (distances <= self.config.FIRE_EXTINGUISH_RADIUS) & (water > 0.0)[:, None] & flying[:, None]
 
         for index, fire in enumerate(fires):
-            record = self._fire_records[id(fire)]
+            record = self._fire_records[fire.uid]
             if record[self.FIRST_SEEN] is None and visible[index]:
                 record[self.FIRST_SEEN] = now
                 self._detection_delays.append(now - record[self.BORN])
@@ -347,7 +356,11 @@ class Measurements:
             if activity == "queue":
                 self._queue_wait[drone.idx] = self._queue_wait.get(drone.idx, 0.0) + self.dt
             elif drone.idx in self._queue_wait and not drone.reloading:
-                self.completed_queue_waits.append(self._queue_wait.pop(drone.idx))
+                waited = self._queue_wait.pop(drone.idx)
+                if flying[index]:
+                    self.completed_queue_waits.append(waited)
+                # Se invece è precipitato, l'attesa non è "finita": registrarla come conclusa
+                # farebbe sembrare le code più corte proprio nelle varianti che perdono droni.
 
     # --- Perlustrazione -----------------------------------------------------
 
@@ -379,7 +392,11 @@ class Measurements:
 
     def _sample_network(self) -> None:
         simulation = self.simulation
-        drones = simulation.drones
+        # Un drone distrutto è fuori dal clock: la sua cassetta postale resta congelata all'ultimo
+        # giro prima dell'urto. Contarlo falserebbe tutto ("vicini per drone" fatto di fantasmi).
+        drones = [drone for drone in simulation.drones if drone.radio_works]
+        if not drones:
+            return
         self._network_samples += 1
         self._neighbors_sum += sum(len(drone.neighbors_heard) for drone in drones) / len(drones)
         self._connected_samples += int(_swarm_is_connected(simulation.neighbors_now))
@@ -405,13 +422,20 @@ class Measurements:
         simulation = self.simulation
         total_drone_seconds = len(simulation.drones) * simulation.sim_time
         channel = simulation.world.channel
-        water_per_drone = [drone.water_delivered for drone in simulation.drones]
+        # L'equità si misura tra chi è ancora in volo: includere i caduti farebbe sembrare
+        # "ingiusto" uno sciame che ha solo perso dei droni, cosa già contata da drones_lost.
+        water_per_drone = [drone.water_delivered for drone in simulation.drones if drone.is_flying]
+        all_queue_waits = self.completed_queue_waits + list(self._queue_wait.values())
 
+        # Con le accensioni spontanee la missione non ha una fine: "riuscita" non vuol dire
+        # niente, e riportare 0% sarebbe fuorviante quanto riportare 100%. Si dichiara indefinita.
+        endless = self.config.IGNITION_RATE_PER_S > 0.0
         values = {
-            "mission_complete": mission.success,
+            "mission_complete": None if endless else mission.success,
             "fire_overrun": mission.outcome is MissionOutcome.OUT_OF_CONTROL,
             "extinction_time_s": self.extinction_time,
             "fire_damage": self.fire_damage,
+            "burning_health_mean": _share(self.fire_damage, simulation.sim_time),
             "fires_spawned": simulation.world.spawned_count,
             "fires_ignited": simulation.world.ignited_count,
             "peak_active_fires": self.peak_active_fires,
@@ -424,17 +448,19 @@ class Measurements:
             "drones_lost": simulation.drones_lost,
             "near_misses": self.near_misses,
             "min_distance_m": self.min_distance if math.isfinite(self.min_distance) else None,
-            "emergency_fraction": _share(self.emergency_seconds, total_drone_seconds),
+            "emergency_fraction": _share(self.emergency_seconds, self.flight_seconds),
 
             **{f"time_{activity}": _share(self.activity_seconds[activity], total_drone_seconds)
                for activity in ACTIVITIES},
 
             "water_fairness": _fairness(water_per_drone),
             "overcrowding_s": self.overcrowding_seconds,
-            "queue_wait_mean_s": _average(self.completed_queue_waits),
-            "queue_wait_max_s": max(self.completed_queue_waits) if self.completed_queue_waits else None,
-            "distance_m": self.distance_travelled,
-            "control_effort": self.control_effort,
+            # Le attese ancora in corso a fine missione contano: scartarle nasconderebbe proprio
+            # i casi peggiori, cioè i droni rimasti in coda fino all'ultimo.
+            "queue_wait_mean_s": _average(all_queue_waits),
+            "queue_wait_max_s": max(all_queue_waits) if all_queue_waits else None,
+            "distance_per_drone_m": _share(self.distance_travelled * simulation.sim_time, self.flight_seconds),
+            "control_effort_rate": _share(self.control_effort, self.flight_seconds),
             "saturation_bounces": sum(drone.bounce_count for drone in simulation.drones),
 
             "message_loss": _share(channel.messages_dropped, channel.messages_attempted),
@@ -556,7 +582,21 @@ EXPERIMENTS = {
         [Variant("urti innocui", {"COLLISION_DAMAGE": False}),
          Variant("urti con danni"),
          Variant("urti con danni, senza evitamento", {"AVOIDANCE_MODE": "none"}),
-         Variant("urti sempre fatali", {"COLLISION_TOTAL_LOSS_SPEED": 0.0})]),
+         Variant("urti sempre fatali", {"COLLISION_TOTAL_LOSS_SPEED": 0.0}),
+         # Che cosa cambia se un rottame resta un ostacolo invece di essere sorvolato.
+         Variant("relitti ingombranti", {"WRECK_BLOCKS_FLIGHT": True})]),
+    "guasti": Experiment(
+        "Un guasto parziale fa più danni di uno totale?",
+        SCENARIOS["critico"],
+        # Lo sciame è sano (evitamento acceso, nessun urto), e al secondo 30 tre droni su dodici si
+        # rompono di colpo. Cambia solo COME si rompono: il danno alla singola macchina è sempre lo
+        # stesso, quello che cambia è cosa continuano a raccontare agli altri.
+        [Variant("nessun guasto", {}),
+         Variant("perdita totale (radio spenta)",
+                 {"FAILURE_INJECTION_COUNT": 3, "FAILURE_INJECTION_RADIO_OFF": True}),
+         Variant("avaria dichiarata", {"FAILURE_INJECTION_COUNT": 3}),
+         Variant("guasto silenzioso",
+                 {"FAILURE_INJECTION_COUNT": 3, "SILENT_FAILURE_PROBABILITY": 1.0})]),
     "radio": Experiment(
         "Quanto peggiora lo sciame quando la radio perde messaggi?",
         SCENARIOS["critico"],
@@ -702,10 +742,16 @@ class Difference:
     reference_average: float
     variant_average: float
     probability_of_luck: float    # quanto sarebbe facile ottenere per caso una differenza così
+    pairs: int = 0                # su quante coppie di simulazioni si basa il confronto
+    # Probabilità corretta per il numero di confronti fatti nel report (vedi holm_correction).
+    corrected_probability: Optional[float] = None
 
     @property
     def is_real(self) -> bool:
-        return self.probability_of_luck < SIGNIFICANCE
+        probability = self.corrected_probability
+        if probability is None:
+            probability = self.probability_of_luck
+        return probability < SIGNIFICANCE
 
 
 def compare_to_reference(reference_runs: List[Dict[str, Any]], variant_runs: List[Dict[str, Any]],
@@ -736,7 +782,8 @@ def compare_to_reference(reference_runs: List[Dict[str, Any]], variant_runs: Lis
     else:
         probability = _probability_of_luck(variant_values - reference_values)
 
-    return Difference(float(reference_values.mean()), float(variant_values.mean()), probability)
+    return Difference(float(reference_values.mean()), float(variant_values.mean()), probability,
+                      pairs=len(pairs))
 
 
 def _probability_of_luck(differences: np.ndarray, attempts: int = 20000) -> float:
@@ -791,6 +838,28 @@ def _probability_of_luck_yes_no(only_reference_succeeded: int, only_variant_succ
     return min(1.0, 2.0 * one_tail)      # due code: lo sbilanciamento può essere in entrambi i versi
 
 
+def holm_correction(differences: List[Difference]) -> None:
+    """Corregge le probabilità per il numero di confronti fatti, e le scrive nei Difference.
+
+    Un report confronta decine di misure su più varianti: un centinaio di test insieme. Anche se
+    nessuna variante cambiasse davvero qualcosa, con la soglia del 5% ci si aspetterebbero circa
+    cinque "scoperte" per puro caso — e infatti, provando con dati puramente casuali, un report
+    non corretto mostra in media una decina di marcatori ▲▼ inventati.
+
+    Il metodo di Holm ordina le probabilità dalla più piccola alla più grande e moltiplica la
+    k-esima per il numero di test che restano da fare (N-k+1), imponendo poi che la sequenza non
+    decresca. È il correttivo standard più semplice che resta valido anche quando le misure sono
+    correlate tra loro, come qui (chi spegne prima percorre meno strada, consuma meno, e così via).
+    """
+    ordered = sorted(differences, key=lambda difference: difference.probability_of_luck)
+    total = len(ordered)
+    running_max = 0.0
+    for position, difference in enumerate(ordered):
+        corrected = min(1.0, difference.probability_of_luck * (total - position))
+        running_max = max(running_max, corrected)
+        difference.corrected_probability = running_max
+
+
 def verdict(metric: Metric, difference: Optional[Difference]) -> str:
     """'migliore', 'peggiore' o 'diverso' se la differenza è reale; stringa vuota altrimenti."""
     if difference is None or not difference.is_real or difference.variant_average == difference.reference_average:
@@ -810,8 +879,22 @@ MARKERS = {"migliore": " ▲", "peggiore": " ▼", "diverso": " ◆", "": ""}
 FEW_RUNS = 20    # sotto questa soglia anche differenze grandi faticano a risultare significative
 
 # Le misure citate nel riassunto iniziale; tutte le altre restano nelle tabelle.
-HEADLINE_METRICS = ["mission_complete", "extinction_time_s", "fire_damage", "collisions",
-                    "drones_lost", "detection_delay_s"]
+HEADLINE_METRICS = ["mission_complete", "extinction_time_s", "burning_health_mean", "collisions",
+                    "drones_lost", "fires_never_seen"]
+
+
+def all_comparisons(experiment: Experiment, runs_by_variant: Dict[str, list]) -> Dict[tuple, Difference]:
+    """Tutti i confronti del report, calcolati una volta sola e corretti per la molteplicità."""
+    reference_name = experiment.variants[0].name
+    comparisons: Dict[tuple, Difference] = {}
+    for variant in experiment.variants[1:]:
+        for metric in METRICS:
+            difference = compare_to_reference(runs_by_variant[reference_name],
+                                              runs_by_variant[variant.name], metric)
+            if difference is not None:
+                comparisons[(variant.name, metric.key)] = difference
+    holm_correction(list(comparisons.values()))
+    return comparisons
 
 
 def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], runs: int,
@@ -821,6 +904,7 @@ def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], 
                        for variant in experiment.variants}
     reference_name = experiment.variants[0].name
     scenario = experiment.scenario
+    comparisons = all_comparisons(experiment, runs_by_variant)
 
     lines = [
         f"# Esperimento «{name}»", "",
@@ -840,10 +924,16 @@ def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], 
         "## In breve", "",
     ]
     if runs < FEW_RUNS:
-        lines += [f"⚠ Poche simulazioni per variante: anche differenze grandi possono non risultare "
-                  f"significative. Per conclusioni affidabili servono almeno {FEW_RUNS} simulazioni "
-                  f"(--runs {FEW_RUNS}).", ""]
-    lines += [_headline(experiment, variant, runs_by_variant) for variant in experiment.variants[1:]]
+        smallest_possible = 2 / 2 ** runs
+        lines += [f"⚠ Poche simulazioni per variante ({runs}). Con {runs} coppie, anche una variante "
+                  f"che vince su TUTTE le simulazioni ottiene al massimo una probabilità di "
+                  f"{smallest_possible:.2g}; moltiplicata per il numero di confronti del report, può "
+                  f"restare sopra la soglia. In pratica sotto le {FEW_RUNS} simulazioni può non "
+                  f"comparire nessun marcatore ▲▼ anche davanti a differenze enormi: le differenze "
+                  f"vanno lette dalle medie e dagli intervalli. Per conclusioni affidabili: "
+                  f"--runs {FEW_RUNS} o più.", ""]
+    lines += [_headline(experiment, variant, runs_by_variant, comparisons)
+              for variant in experiment.variants[1:]]
 
     lines += ["", "## Risultati", "",
               "Ogni cella: media sulle simulazioni e, tra parentesi, l'intervallo di confidenza al 95%. "
@@ -861,10 +951,10 @@ def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], 
                 cell = _format(metric, summary.average)
                 if summary.low is not None:
                     cell += f" ({_format(metric, summary.low)}–{_format(metric, summary.high)})"
+                if 0 < summary.runs < runs:  # la misura non era definita in tutte le simulazioni
+                    cell += f" [su {summary.runs}]"
                 if variant.name != reference_name:
-                    difference = compare_to_reference(runs_by_variant[reference_name],
-                                                      runs_by_variant[variant.name], metric)
-                    cell += MARKERS[verdict(metric, difference)]
+                    cell += MARKERS[verdict(metric, comparisons.get((variant.name, metric.key)))]
                 cells.append(cell)
             lines.append(f"| {metric.label}{_unit_suffix(metric)} | " + " | ".join(cells) + " |")
 
@@ -874,8 +964,13 @@ def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], 
         "cadrebbe quasi sempre dentro quell'intervallo. Se è largo, servono più simulazioni.",
         f"- **▲ ▼ ◆**: la differenza rispetto al riferimento supera il test statistico "
         f"(probabilità che sia fortuna sotto {SIGNIFICANCE:.0%}). Le simulazioni sono confrontate a "
-        "coppie con lo stesso seed. Attenzione: \"reale\" non vuol dire \"grande\" — guardare anche "
-        "di quanto cambia la media.",
+        "coppie con lo stesso seed, e le probabilità sono corrette con il metodo di Holm per il "
+        "numero di confronti fatti in questo report: senza quella correzione, una decina di "
+        "marcatori sarebbero falsi allarmi dovuti al solo numero di test. Attenzione: \"reale\" non "
+        "vuol dire \"grande\" — guardare anche di quanto cambia la media.",
+        "- **[su N]** accanto a un valore: quella misura non era definita in tutte le simulazioni "
+        "(per esempio il tempo di spegnimento esiste solo per le missioni riuscite), quindi media e "
+        "intervallo si basano su N simulazioni invece che su tutte.",
         "- **Tempo per spegnere tutto** è calcolato solo sulle missioni riuscite: va letto insieme a "
         "«Missione riuscita», altrimenti una variante che fallisce spesso sembra veloce.",
         "- Le simulazioni finiscono in momenti diversi (chi riesce prima si ferma prima), quindi le "
@@ -893,18 +988,21 @@ def write_report(name: str, experiment: Experiment, rows: List[Dict[str, Any]], 
     return path
 
 
-def _headline(experiment: Experiment, variant: Variant, runs_by_variant: Dict[str, list]) -> str:
+def _headline(experiment: Experiment, variant: Variant, runs_by_variant: Dict[str, list],
+              comparisons: Dict[tuple, Difference]) -> str:
     """Una riga di sintesi per una variante: cosa è cambiato davvero rispetto al riferimento."""
     reference_name = experiment.variants[0].name
     important_changes, other_changes = [], 0
     for metric in METRICS:
-        difference = compare_to_reference(runs_by_variant[reference_name], runs_by_variant[variant.name], metric)
+        difference = comparisons.get((variant.name, metric.key))
         judgement = verdict(metric, difference)
         if not judgement:
             continue
         if metric.key in HEADLINE_METRICS:
+            on_subset = "" if difference.pairs == len(runs_by_variant[variant.name]) else \
+                f", su {difference.pairs} simulazioni"
             important_changes.append(f"{metric.label.lower()} {_format(metric, difference.reference_average)} → "
-                                     f"{_format(metric, difference.variant_average)} ({judgement})")
+                                     f"{_format(metric, difference.variant_average)} ({judgement}{on_subset})")
         else:
             other_changes += 1
 

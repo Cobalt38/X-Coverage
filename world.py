@@ -7,8 +7,9 @@ Questo file contiene tutto ciò che esiste indipendentemente dai droni. Si legge
     2. Vettori          quattro funzioni di supporto usate ovunque.
     3. Incendio         un fuoco che cresce finché qualcuno non lo spegne.
     4. Terreno          la mappa di importanza: quanto vale tenere d'occhio ogni zona.
-    5. Radio            il messaggio che un drone trasmette e la cassetta postale di chi lo riceve.
-    6. Mondo            sensori e attuatori che il mondo mette a disposizione dei droni.
+    5. Clock            il battito condiviso: scandisce il tempo di tutti i droni.
+    6. Radio            il messaggio che un drone trasmette e la cassetta postale di chi lo riceve.
+    7. Mondo            sensori e attuatori che il mondo mette a disposizione dei droni.
 
 Il mondo conosce tutto perché È la realtà fisica simulata. I droni no: vedono solo ciò che il
 mondo risponde ai loro sensori e ciò che arriva dalla radio. Il mondo non decide mai nulla al
@@ -18,6 +19,7 @@ Chi legge il progetto per la prima volta: dopo questo file, drone.py.
 """
 
 import dataclasses
+import itertools
 import math
 import random
 from dataclasses import dataclass, field
@@ -37,10 +39,22 @@ GOLDEN_ANGLE = 2.399963
 
 
 class DroneStatus(Enum):
-    """In che stato è la macchina. Un drone danneggiato non torna mai a volare."""
+    """In che stato è la macchina. Un drone danneggiato non torna mai a volare.
+
+    I tre modi di rompersi non sono ordinati per gravità del danno, ma per quanto l'avaria è
+    ONESTA verso gli altri — ed è quella, non il danno, a decidere quanto costa allo sciame:
+
+        GROUNDED   è caduto e lo dice. Gli altri gli passano sopra e non contano più su di lui.
+        DESTROYED  è caduto e tace. Per lo sciame è come se non fosse mai esistito.
+        SILENT     è caduto e continua a dire che sta volando. È il caso peggiore: gli altri lo
+                   scansano, aspettano il suo turno, gli lasciano l'incendio che aveva preso in
+                   carico, e continuano a ripetersi le notizie che aveva in memoria nell'istante
+                   dell'urto, come se fossero appena state confermate.
+    """
     FLYING = "in volo"
     GROUNDED = "a terra"      # motori distrutti: è precipitato, ma la radio funziona ancora
     DESTROYED = "distrutto"   # anche la radio è spenta: per lo sciame è come se non esistesse
+    SILENT = "guasto silenzioso"   # è precipitato ma continua a trasmettere l'ultimo stato
 
 
 # Valori ammessi per i parametri che scelgono tra comportamenti alternativi.
@@ -110,6 +124,9 @@ class SimConfig:
     WATER_STATION_SLOT_RADIUS: float = 0.55       # distanza dei posti dal centro della stazione
     WATER_STATION_WAIT_RADIUS: float = 1.9        # anello dove aspetta chi trova i posti occupati
     WATER_STATION_MIN_SEPARATION: float = 5.0     # distanza minima tra stazioni piazzate a caso
+    # Dopo quanto un drone che non riesce a rifornirsi rinuncia e riprova da capo, magari altrove.
+    # Serve contro i blocchi: per esempio un relitto caduto proprio sul posto di rifornimento.
+    REFUEL_GIVE_UP_S: float = 45.0
     WATER_STATION_GENERATION_MARGIN: float = 2.0  # nessuna stazione più vicina di così al bordo
 
     # --- Movimento del drone -----------------------------------------------
@@ -152,19 +169,42 @@ class SimConfig:
 
     # --- Conseguenze di un urto --------------------------------------------
     # Un urto non è più solo un numero in una statistica: i droni si rompono.
-    COLLISION_DAMAGE: bool = True                 # False = urti innocui (come nelle versioni precedenti)
+    COLLISION_DAMAGE: bool = True                 # False = gli urti si contano ma non rompono niente
     # Velocità RELATIVA d'impatto oltre la quale si rompe anche la radio. Sotto, si rompono solo
     # i motori: il drone precipita dove si trovava ma continua a trasmettere quello che sa.
     COLLISION_TOTAL_LOSS_SPEED: float = 0.6
     # Un relitto caduto dentro un incendio brucia: dopo questi secondi tace anche lui.
     WRECK_BURN_TIME_S: float = 20.0
+    # Un drone precipitato resta un ostacolo per chi vola ancora?
+    # False (default): no. I droni volano a quota di crociera e un rottame sta a terra, quindi ci
+    #   passano sopra. È anche la situazione realistica: riconoscere di essere a terra è banale per
+    #   un multirotore (assetto ribaltato, accelerometro fermo a 1 g, giri dei motori a zero), e
+    #   dichiararlo agli altri costa un bit nel messaggio che già trasmette.
+    # True: sì, come se fosse rimasto sospeso dove si è rotto. Serve per misurare quanto costa allo
+    #   sciame un ostacolo fisso e inutile: vedi la variante "relitti ingombranti" in experiments.py.
+    WRECK_BLOCKS_FLIGHT: bool = False
+    # Quota dei guasti in cui l'avaria NON viene dichiarata: il drone precipita ma la sua radio
+    # continua a ripetere l'ultimo stato, "sto volando" compreso. Con 0 non succede mai.
+    # È il guasto bizantino del povero: non mente di proposito, semplicemente si è fermato con
+    # l'ultima verità in bocca. Vedi l'esperimento "guasti".
+    SILENT_FAILURE_PROBABILITY: float = 0.0
+    # Guasti provocati a tavolino, per studiare la resilienza senza aspettare che accada un urto:
+    # a FAILURE_INJECTION_TIME_S si rompono FAILURE_INJECTION_COUNT droni scelti a caso.
+    FAILURE_INJECTION_COUNT: int = 0
+    FAILURE_INJECTION_TIME_S: float = 30.0
+    # Come si rompono i droni scelti: False = si guastano ma la radio resta viva (e allora
+    # SILENT_FAILURE_PROBABILITY decide se dichiarano l'avaria); True = perdita totale, radio spenta.
+    FAILURE_INJECTION_RADIO_OFF: bool = False
 
     # --- Perlustrazione ----------------------------------------------------
     # "random": quando non ha compiti, il drone sceglie un punto a caso nell'area.
     # "coverage": sceglie dove non si guarda da più tempo, pesando quanto vale quella zona.
     EXPLORATION_MODE: str = "random"
     COVERAGE_CELL_SIZE: float = 0.5               # lato della cella della griglia [m]
-    COVERAGE_HALF_LIFE_S: float = 30.0            # dopo quanto una zona vista torna a chiedere una visita
+    # Oltre questa anzianità una zona non "peggiora" più: evita che una zona dimenticata da dieci
+    # minuti valga dieci volte una dimenticata da un minuto, e che i droni la raggiungano in massa.
+    COVERAGE_STALENESS_CAP_S: float = 120.0
+    COVERAGE_HALF_LIFE_S: float = 30.0            # usato solo dalla visualizzazione della freschezza
     COVERAGE_REPLAN_S: float = 1.0                # ogni quanto si ricalcola la meta
     COVERAGE_SYNC_PERIOD_S: float = 0.5           # ogni quanto la mappa di copertura viaggia via radio
     COVERAGE_W_DIST: float = 0.05                 # quanto pesa la distanza nella scelta della meta [1/m]
@@ -218,6 +258,10 @@ class SimConfig:
     @property
     def COVERAGE_SYNC_STEPS(self) -> int:
         return max(1, int(round(self.COVERAGE_SYNC_PERIOD_S / self.SIM_TIME_STEP)))
+
+    @property
+    def REFUEL_GIVE_UP_STEPS(self) -> int:
+        return int(round(self.REFUEL_GIVE_UP_S / self.SIM_TIME_STEP))
 
     @property
     def WRECK_BURN_STEPS(self) -> int:
@@ -295,6 +339,8 @@ def validate_config(config: SimConfig = DEFAULT_CONFIG) -> List[str]:
         problems.append("COVERAGE_IMPORTANCE_EXPONENT non può essere negativo")
     if config.IGNITION_RATE_PER_S < 0.0:
         problems.append("IGNITION_RATE_PER_S non può essere negativo")
+    if not 0.0 <= config.SILENT_FAILURE_PROBABILITY <= 1.0:
+        problems.append("SILENT_FAILURE_PROBABILITY è una probabilità: deve stare tra 0 e 1")
     return problems
 
 
@@ -304,20 +350,36 @@ def validate_config(config: SimConfig = DEFAULT_CONFIG) -> List[str]:
 
 def clamp_magnitude(vector: np.ndarray, limit: float) -> np.ndarray:
     """Lo stesso vettore, accorciato se supera la lunghezza massima (la direzione non cambia)."""
-    magnitude = np.linalg.norm(vector)
-    if magnitude <= 1e-12:
+    length = magnitude(vector)
+    if length <= 1e-12:
         return vector.copy()
-    if magnitude > limit:
-        return vector * (limit / magnitude)
+    if length > limit:
+        return vector * (limit / length)
     return vector.copy()
+
+
+def magnitude(vector: np.ndarray) -> float:
+    """Lunghezza di un vettore a due componenti.
+
+    Calcola esattamente ciò che calcola np.linalg.norm, ma cinque volte più in fretta: su vettori
+    così corti il tempo se ne va tutto nella macchinosità di numpy, non nel calcolo. Il risultato è
+    identico bit per bit, perché le operazioni sono le stesse e nello stesso ordine — se ne accorge
+    subito il test di regressione, che confronta le traiettorie con un'impronta digitale.
+
+    Vale la pena perché è la funzione più chiamata del progetto: quasi un milione di volte ogni
+    trenta secondi simulati, un terzo del tempo di calcolo totale.
+    """
+    x = vector[0]
+    y = vector[1]
+    return math.sqrt(x * x + y * y)
 
 
 def normalize(vector: np.ndarray) -> np.ndarray:
     """Vettore di lunghezza 1 nella stessa direzione (vettore nullo se l'originale è nullo)."""
-    magnitude = np.linalg.norm(vector)
-    if magnitude <= 1e-12:
+    length = magnitude(vector)
+    if length <= 1e-12:
         return np.zeros_like(vector)
-    return vector / magnitude
+    return vector / length
 
 
 def unit_from_angle(angle: float) -> np.ndarray:
@@ -334,12 +396,18 @@ def vec_to_tuple(vector: np.ndarray) -> FirePos:
 # 3. INCENDIO
 # ============================================================
 
+_fire_numbering = itertools.count()
+
+
 @dataclass(eq=False)
 class Fire:
     """Un incendio: sta fermo, cresce da solo, si spegne solo se riceve abbastanza acqua."""
     pos: np.ndarray
     health: float          # quanta acqua serve ancora per spegnerlo
     growth_rate: float     # quanta vita guadagna al secondo
+    # Numero progressivo, per chi tiene la storia di ogni incendio. Non si usa id() perché Python
+    # ricicla gli indirizzi: un incendio nuovo erediterebbe la storia di uno appena spento.
+    uid: int = field(default_factory=lambda: next(_fire_numbering))
 
     @property
     def active(self) -> bool:
@@ -459,7 +527,65 @@ class ImportanceMap:
 
 
 # ============================================================
-# 5. RADIO
+# 5. IL CLOCK
+# ============================================================
+
+class Clock:
+    """Il battito della simulazione: l'unica cosa che i droni hanno in comune oltre alla radio.
+
+    Nessuno comanda i droni. Ciascuno, quando nasce, si iscrive al clock lasciandogli due cose da
+    richiamare a ogni battito, e da quel momento nel resto del programma non esiste più un modo per
+    farlo agire dall'esterno: i suoi metodi sono privati, e l'unico che li conosce è il clock.
+
+    Ogni battito ha tre fasi, e l'ordine è la regola più importante di tutta la simulazione:
+
+        fase 1 — TUTTI trasmettono ciò che sanno
+        fase 2 — TUTTI leggono la posta e decidono dove andare
+        fase 3 — TUTTI agiscono sul mondo (spruzzano acqua, caricano)
+
+    Se le fasi fossero mescolate, il drone che ragiona per primo deciderebbe conoscendo già le mosse
+    appena fatte dagli altri, e chi ragiona per ultimo sarebbe sistematicamente avvantaggiato.
+    Separare la fase 3 serve allo stesso scopo verso il mondo: nessuno decide guardando un incendio
+    che un altro ha appena spento nello stesso battito.
+    """
+
+    def __init__(self, time_step: float):
+        self.time_step = time_step
+        self.step_count = 0
+        self._broadcast_phase: List[Tuple[int, Any]] = []   # (indice, funzione da chiamare)
+        self._thinking_phase: List[Tuple[int, Any]] = []
+        self._acting_phase: List[Tuple[int, Any]] = []
+
+    @property
+    def now_s(self) -> float:
+        """Secondi trascorsi dall'inizio della simulazione."""
+        return self.step_count * self.time_step
+
+    def subscribe(self, subscriber_id: int, broadcast, think, act) -> None:
+        """Un agente chiede di essere svegliato a ogni battito, in tutte e tre le fasi."""
+        self._broadcast_phase.append((subscriber_id, broadcast))
+        self._thinking_phase.append((subscriber_id, think))
+        self._acting_phase.append((subscriber_id, act))
+
+    def unsubscribe(self, subscriber_id: int) -> None:
+        """Un agente smette di rispondere al clock: per un drone vuol dire essere distrutto."""
+        self._broadcast_phase = [entry for entry in self._broadcast_phase if entry[0] != subscriber_id]
+        self._thinking_phase = [entry for entry in self._thinking_phase if entry[0] != subscriber_id]
+        self._acting_phase = [entry for entry in self._acting_phase if entry[0] != subscriber_id]
+
+    def tick(self) -> None:
+        """Un battito: prima parlano tutti, poi ragionano tutti, infine agiscono tutti."""
+        for _, broadcast in self._broadcast_phase:
+            broadcast()
+        for _, think in self._thinking_phase:
+            think()
+        for _, act in self._acting_phase:
+            act()
+        self.step_count += 1
+
+
+# ============================================================
+# 6. RADIO
 # ============================================================
 
 @dataclass
@@ -476,6 +602,7 @@ class DroneMessage:
     water_station_idx: Optional[int]            # a quale stazione
     refuel_claim_age: int                       # da quanti passi aspetta il proprio turno
     station_slot: Optional[int]                 # quale posto di rifornimento occupa
+    flying: bool                                # è ancora in volo (un relitto trasmette ma sta a terra)
     extinguishing: bool                         # sta spruzzando acqua
     fire_target: Optional[FirePos]              # di quale incendio si sta occupando
     known_fires: Dict[FirePos, int]             # incendi che crede accesi -> quanto è vecchia la notizia
@@ -584,7 +711,7 @@ class RadioChannel:
 
 
 # ============================================================
-# 6. MONDO
+# 7. MONDO
 # ============================================================
 
 class SimulationWorld:
@@ -607,11 +734,12 @@ class SimulationWorld:
         self.water_stations = water_stations     # infrastruttura fissa, nota a tutti
         self.terrain = terrain
         self.channel = RadioChannel(config, seed)
+        # Il tempo comune a tutti: i droni vi si iscrivono da soli e nessun altro li fa agire.
+        self.clock = Clock(config.SIM_TIME_STEP)
         # Generatore dedicato alle accensioni spontanee: con IGNITION_RATE_PER_S = 0 non estrae
         # nemmeno un numero, quindi accenderle non cambia il resto dello scenario.
         self.ignition_rng = random.Random(f"ignition-{seed}")
 
-        self.step_counter = 0
         self.extinguished_count = 0    # incendi spenti dai droni
         self.spawned_count = 0         # incendi nati per propagazione
         self.ignited_count = 0         # incendi nati da soli
@@ -620,6 +748,11 @@ class SimulationWorld:
     @property
     def fires(self) -> List[Fire]:
         return self._fires
+
+    @property
+    def step_counter(self) -> int:
+        """Quanti battiti sono passati: il tempo è quello del clock, non un contatore a parte."""
+        return self.clock.step_count
 
     # --- Radio -------------------------------------------------------------
 
@@ -635,10 +768,10 @@ class SimulationWorld:
         """Gli incendi accesi che un drone in questa posizione riesce a vedere."""
         radius = self.config.FIRE_DETECTION_RADIUS
         return [fire for fire in self._fires
-                if fire.active and np.linalg.norm(position - fire.pos) <= radius]
+                if fire.active and magnitude(position - fire.pos) <= radius]
 
     def has_active_fire_near(self, position: np.ndarray, radius: float) -> bool:
-        return any(fire.active and np.linalg.norm(position - fire.pos) <= radius for fire in self._fires)
+        return any(fire.active and magnitude(position - fire.pos) <= radius for fire in self._fires)
 
     # --- Attuatore ---------------------------------------------------------
 
@@ -655,7 +788,7 @@ class SimulationWorld:
         for fire in self._fires:
             if remaining <= 1e-12:
                 break
-            if not fire.active or np.linalg.norm(position - fire.pos) > self.config.FIRE_EXTINGUISH_RADIUS:
+            if not fire.active or magnitude(position - fire.pos) > self.config.FIRE_EXTINGUISH_RADIUS:
                 continue
             used = fire.extinguish(remaining)
             total_used += used
@@ -672,7 +805,6 @@ class SimulationWorld:
 
     def update_fires(self, rng: random.Random) -> None:
         """Fa crescere gli incendi, li fa propagare e ne accende di nuovi. Una volta per passo."""
-        self.step_counter += 1
         self._grow_and_spread(rng)
         self._maybe_ignite_new_fire()
         self._remove_dead_fires()

@@ -1,15 +1,17 @@
 """
 LE VERIFICHE AUTOMATICHE: si lanciano con   python main.py test
 
-Servono a poter cambiare il codice senza paura. Sono divise in cinque gruppi, ognuno con uno scopo:
+Servono a poter cambiare il codice senza paura. Sono divise in sei gruppi, ognuno con uno scopo:
 
-    1. Regressione     la simulazione produce ESATTAMENTE le stesse traiettorie di prima. Se si
-                       cambia di proposito la logica dei droni questo test fallisce: è normale, va
-                       aggiornata l'impronta sapendo che i risultati vecchi non sono più confrontabili.
+    1. Regressione     le traiettorie corrispondono a un'impronta digitale registrata. Toccare la
+                       logica dei droni fa fallire questo test: se il cambiamento è voluto, si
+                       aggiorna l'impronta, tenendo presente che i risultati raccolti con l'impronta
+                       precedente non sono più confrontabili con i nuovi.
     2. Varianti        ogni interruttore fa davvero qualcosa, e lasciandolo com'è non cambia nulla.
-    3. Urti            un drone che si scontra si rompe, e nel modo giusto a seconda dell'impatto.
-    4. Perlustrazione  la copertura persistente e le accensioni spontanee si comportano come descritto.
-    5. Misure e statistica   i numeri del report sono calcolati correttamente su casi noti.
+    3. Autonomia       un drone non conosce gli altri droni: decide solo con la posta che riceve.
+    4. Urti            un drone che si scontra si rompe, e nel modo giusto a seconda dell'impatto.
+    5. Perlustrazione  la copertura persistente e le accensioni spontanee si comportano come descritto.
+    6. Misure e statistica   i numeri del report sono calcolati correttamente su casi noti.
 """
 
 import hashlib
@@ -18,17 +20,17 @@ import unittest
 import numpy as np
 
 import experiments
-from drone import CoverageMemory, choose_patrol_point
+from drone import CoverageMemory, Drone, choose_patrol_point
 from simulation import MissionOutcome, Simulation
-from world import DroneStatus, ImportanceMap, SimConfig, validate_config
+from world import DroneMessage, DroneStatus, ImportanceMap, SimConfig, validate_config, vec_to_tuple
 
 GOLDEN_STEPS = 3000
 
 # Impronte calcolate sulla versione di riferimento del codice: riassumono in un'unica stringa
 # posizioni, velocità, acqua e incendi dopo GOLDEN_STEPS passi.
 GOLDEN = {
-    (42, False, False): "c4844169664da35133ed4452b1c4625b71554de4c96e6ef96689a9535d6ae1fa",
-    (7, True, True): "6ede2fe2faa7357f3915a2e81e00dd75afb7fc88dd58e2efb567b72f78e6487c",
+    (42, False, False): "69be35783a2f60536f9aa3998846f4bbe5e823b4f96f374ab73799aefec0d3bf",
+    (7, True, True): "04fe46bf7ba518858b238061ea7c2405bc3a10e1d9fcffe0f7081251c53906af",
 }
 
 
@@ -78,7 +80,7 @@ class Regressione(unittest.TestCase):
         result = simulation.run(max_time_s=600.0)
         self.assertIs(result.outcome, MissionOutcome.ALL_FIRES_OUT)
         self.assertEqual(result.fires_left, 0)
-        self.assertAlmostEqual(result.elapsed_s, 74.34, places=2)
+        self.assertAlmostEqual(result.elapsed_s, 67.29, places=2)
 
 
 class Varianti(unittest.TestCase):
@@ -122,6 +124,65 @@ class Varianti(unittest.TestCase):
         self.assertTrue(validate_config(SimConfig(IGNITION_RATE_PER_S=-1.0)))
         # Raggio radio troppo corto: due droni sullo stesso incendio non si sentirebbero più.
         self.assertTrue(validate_config(SimConfig(COMMUNICATION_RADIUS=1.5)))
+
+
+class Autonomia(unittest.TestCase):
+    """Un drone non viene comandato da nessuno: risponde al tempo e alla posta, e basta."""
+
+    def test_non_tiene_riferimenti_agli_altri_droni(self):
+        # Se un drone avesse in pancia un altro drone potrebbe leggerne lo stato vero, aggirando
+        # la radio: la decentralizzazione sarebbe finta. Qui si controlla che non accada.
+        simulation = Simulation(seed=1)
+        drone = simulation.drones[0]
+        for name, value in vars(drone).items():
+            if name in ("world", "mailbox"):        # l'ambiente e la propria cassetta postale
+                continue
+            self.assertNotIsInstance(value, Drone, f"{name} punta a un altro drone")
+            items = value.values() if isinstance(value, dict) else value
+            if isinstance(items, (list, tuple, set)) or isinstance(value, dict):
+                for item in items:
+                    self.assertNotIsInstance(item, Drone, f"{name} contiene un altro drone")
+
+    def test_decide_in_base_ai_messaggi_che_riceve(self):
+        """Un drone solo al mondo, a cui si consegna a mano della posta inventata.
+
+        Da solo si prende l'incendio. Se gli arrivano tre messaggi che dicono "ci stiamo lavorando
+        noi", si fa da parte: la decisione dipende SOLO da quello che gli è stato detto.
+        """
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=1))
+        drone = simulation.drones[0]
+        fire = simulation.world.fires[0]
+        fire_position = vec_to_tuple(fire.pos)
+        drone.position[:] = fire.pos + np.array([1.5, 0.0])     # abbastanza vicino da vederlo
+
+        simulation._advance_one_step()
+        self.assertEqual(drone.fire_target, fire_position, "da solo dovrebbe occuparsene lui")
+
+        for neighbour_idx in (1, 2, 3):
+            drone.mailbox.deliver(neighbour_idx, self._busy_neighbour(fire.pos, neighbour_idx))
+        simulation._advance_one_step()
+        self.assertIsNone(drone.fire_target, "con tre droni già sul posto dovrebbe farsi da parte")
+        self.assertIn(fire_position, drone.saturated_fires)
+
+    @staticmethod
+    def _busy_neighbour(fire_position: np.ndarray, idx: int) -> DroneMessage:
+        """Un messaggio inventato: un drone fermo sul fuoco che dice di starlo spegnendo."""
+        angle = idx * 2.0
+        position = fire_position + 0.8 * np.array([np.cos(angle), np.sin(angle)])
+        return DroneMessage(position=position, velocity=np.zeros(2), target=position.copy(),
+                            reloading=False, water_station_idx=None, refuel_claim_age=0,
+                            station_slot=None, flying=True, extinguishing=True,
+                            fire_target=vec_to_tuple(fire_position), known_fires={}, extinguished_fires={})
+
+    def test_un_drone_distrutto_smette_di_rispondere_al_clock(self):
+        simulation = Simulation(seed=1)
+        clock = simulation.world.clock
+        subscribers_before = len(clock._thinking_phase)
+        simulation.drones[0].break_down(radio_destroyed=True)
+        self.assertEqual(len(clock._thinking_phase), subscribers_before - 1)
+        # Chi è solo a terra continua invece a farsi svegliare, perché la radio funziona ancora.
+        simulation.drones[1].break_down(radio_destroyed=False)
+        self.assertEqual(len(clock._thinking_phase), subscribers_before - 1)
 
 
 class Urti(unittest.TestCase):
@@ -192,6 +253,125 @@ class Urti(unittest.TestCase):
         self.assertEqual(result.drones_lost, len(simulation.drones))
 
 
+class Relitti(unittest.TestCase):
+    """Un drone precipitato non deve diventare un ostacolo per chi vola ancora."""
+
+    def _wreck_and_flyer(self, radio_alive: bool = True):
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2))
+        wreck, flyer = simulation.drones
+        wreck.position[:] = (10.0, 6.0)
+        wreck.break_down(radio_destroyed=not radio_alive)
+        flyer.position[:] = (9.0, 6.0)
+        flyer.velocity[:] = (0.5, 0.0)
+        flyer.target = np.array([14.0, 6.0])
+        simulation.world.refresh_neighbors()
+        wreck._broadcast()
+        flyer.mailbox.begin_round()
+        return simulation, wreck, flyer
+
+    def test_non_ci_si_scansa_da_un_drone_a_terra(self):
+        # Sta a terra: ci si vola sopra, quindi la spinta per scansarlo deve essere esattamente zero.
+        _, _, flyer = self._wreck_and_flyer()
+        correction, emergency, _ = flyer._avoidance_correction()
+        self.assertEqual(float(np.linalg.norm(correction)), 0.0)
+        self.assertFalse(emergency)
+
+    def test_si_puo_chiedere_che_i_relitti_restino_ingombranti(self):
+        # L'alternativa esiste come variante da misurare: il rottame resta dov'è e va scansato.
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2, WRECK_BLOCKS_FLIGHT=True))
+        wreck, flyer = simulation.drones
+        wreck.position[:] = (10.0, 6.0)
+        wreck.break_down(radio_destroyed=False)
+        flyer.position[:] = (9.0, 6.0)
+        flyer.velocity[:] = (0.5, 0.0)
+        flyer.target = np.array([14.0, 6.0])
+        simulation.world.refresh_neighbors()
+        wreck._broadcast()
+        flyer.mailbox.begin_round()
+        correction, _, _ = flyer._avoidance_correction()
+        self.assertGreater(float(np.linalg.norm(correction)), 1.0)
+
+    def test_un_relitto_non_si_prende_una_zona_da_perlustrare(self):
+        # La cella di Voronoi si divide solo tra chi può davvero andare a guardare.
+        simulation, wreck, flyer = self._wreck_and_flyer()
+        flyer.coverage = CoverageMemory(simulation.terrain.shape)
+        destination = flyer._patrol_point()
+        self.assertGreater(np.linalg.norm(destination - flyer.position), 1.0)
+
+    def test_un_relitto_non_blocca_per_sempre_un_posto_di_rifornimento(self):
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2))
+        wreck, thirsty = simulation.drones
+        station_idx = 0
+        blocked_slot = thirsty._slot_position(station_idx, 0)
+        wreck.position[:] = blocked_slot
+        wreck.break_down(radio_destroyed=False)
+        thirsty.position[:] = simulation.water_stations[station_idx] + np.array([1.0, 0.0])
+        thirsty.water = 0.0
+        thirsty.water_station_idx = station_idx
+        thirsty.reloading = True
+        simulation.world.refresh_neighbors()
+        wreck._broadcast()
+        thirsty.mailbox.begin_round()
+        thirsty._update_my_slot()
+        self.assertNotEqual(thirsty.station_slot, 0, "si è assegnato il posto occupato dal relitto")
+
+    def test_il_guasto_silenzioso_continua_a_dire_di_volare(self):
+        # È il caso peggiore: la macchina è a terra ma per lo sciame è ancora in servizio.
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2, SILENT_FAILURE_PROBABILITY=1.0))
+        liar, listener = simulation.drones
+        liar.position[:] = (10.0, 6.0)
+        liar.fire_target = (12.0, 7.0)
+        liar.known_fires[(12.0, 7.0)] = 3
+        liar.break_down(radio_destroyed=False)
+
+        self.assertIs(liar.status, DroneStatus.SILENT)
+        self.assertFalse(liar.is_flying)
+        self.assertTrue(liar.radio_works)
+        self.assertEqual(liar.fire_target, (12.0, 7.0), "non ha liberato l'incendio che aveva preso")
+
+        listener.position[:] = (10.5, 6.0)
+        simulation.world.refresh_neighbors()
+        liar._broadcast()
+        listener.mailbox.begin_round()
+        message = listener.neighbors_heard[liar.idx]
+        self.assertTrue(message.flying, "dovrebbe dichiararsi ancora in volo")
+        self.assertEqual(message.fire_target, (12.0, 7.0))
+
+    def test_il_guasto_silenzioso_congela_le_notizie(self):
+        # La radio ripete la stessa fotografia: le età delle notizie non avanzano più, quindi per
+        # i vicini quell'informazione resta eternamente "appena confermata".
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2, SILENT_FAILURE_PROBABILITY=1.0))
+        liar = simulation.drones[0]
+        liar.known_fires[(12.0, 7.0)] = 3
+        liar.break_down(radio_destroyed=False)
+        first = liar._frozen_message.known_fires[(12.0, 7.0)]
+        for _ in range(500):
+            simulation._advance_one_step()
+        self.assertEqual(liar._frozen_message.known_fires[(12.0, 7.0)], first)
+
+    def test_senza_guasti_silenziosi_non_si_estrae_nessun_numero(self):
+        # Con probabilità 0 il generatore del drone non deve essere toccato, altrimenti attivare
+        # l'opzione cambierebbe le traiettorie anche quando è spenta.
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=2))
+        drone = simulation.drones[0]
+        state_before = drone.rng.getstate()
+        drone.break_down(radio_destroyed=False)
+        self.assertIs(drone.status, DroneStatus.GROUNDED)
+        self.assertEqual(drone.rng.getstate(), state_before)
+
+    def test_un_urto_multiplo_non_ripara_nessuno(self):
+        # Tre droni a contatto nello stesso passo: le velocità d'impatto vanno misurate tutte
+        # prima di applicare i danni, altrimenti un drone già distrutto tornerebbe "solo a terra".
+        simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=3))
+        first, second, third = simulation.drones
+        first.position[:] = (5.0, 5.0); first.velocity[:] = (1.0, 0.0)
+        second.position[:] = (5.05, 5.0); second.velocity[:] = (-1.0, 0.0)
+        third.position[:] = (5.02, 5.03); third.velocity[:] = (0.9, 0.9)
+        simulation._handle_collisions()
+        for drone in simulation.drones:
+            self.assertIs(drone.status, DroneStatus.DESTROYED)
+
+
 class Perlustrazione(unittest.TestCase):
 
     def test_unire_due_mappe_di_copertura_non_dipende_dall_ordine(self):
@@ -222,6 +402,17 @@ class Perlustrazione(unittest.TestCase):
         self.assertAlmostEqual(float(coverage.freshness(int(half_life), half_life)[0, 0]), 0.5, places=6)
         self.assertAlmostEqual(float(CoverageMemory((1, 1)).freshness(0, half_life)[0, 0]), 0.0)
 
+    def test_la_meta_di_perlustrazione_e_lontana_abbastanza_da_valere_il_viaggio(self):
+        # Il guadagno cresce con i secondi di attesa: se fosse limitato a 1, come la freschezza,
+        # dopo pochi secondi nessuna cella varrebbe più di un metro di volo e i droni si
+        # fermerebbero dove sono.
+        simulation = Simulation(seed=4, config=SimConfig(EXPLORATION_MODE="coverage"))
+        simulation.world.fires.clear()
+        for _ in range(3000):
+            simulation._advance_one_step()
+        distances = [float(np.linalg.norm(drone.target - drone.position)) for drone in simulation.drones]
+        self.assertGreater(float(np.median(distances)), 2.0)
+
     def test_la_meta_resta_nella_propria_zona_di_competenza(self):
         config = SimConfig(EXPLORATION_MODE="coverage")
         terrain = ImportanceMap(config)
@@ -235,6 +426,16 @@ class Perlustrazione(unittest.TestCase):
         self.assertGreater(simulation.world.ignited_count, 50)
         where_they_started = [simulation.terrain.value_at(*fire.pos) for fire in simulation.world.fires]
         self.assertGreater(np.mean(where_they_started), simulation.terrain.grid.mean())
+
+    def test_con_le_accensioni_attive_la_missione_non_ha_un_esito(self):
+        # "Riuscita" non è definita se gli incendi continuano ad accendersi: la misura deve
+        # risultare indefinita, non 0% (che sembrerebbe un fallimento dello sciame).
+        scenario = experiments.Scenario("senza fine", "", random_fires=False, random_stations=False,
+                                        max_time_s=5.0)
+        row = experiments.run_one_simulation("senza fine", SimConfig(IGNITION_RATE_PER_S=0.05),
+                                             scenario, seed=1)
+        self.assertIsNone(row["mission_complete"])
+        self.assertIsNone(row["extinction_time_s"])
 
     def test_con_le_accensioni_attive_nessun_incendio_non_vuol_dire_missione_finita(self):
         simulation = simulate_steps(10, IGNITION_RATE_PER_S=0.1)
@@ -254,13 +455,14 @@ class MisureEStatistica(unittest.TestCase):
         cls.row = experiments.run_one_simulation("prova", SimConfig(), scenario, seed=42)
 
     def test_valori_noti(self):
-        # Misurati sulla prima versione delle metriche: devono restare stabili nel tempo.
+        # Valori misurati su questa versione: devono restare stabili finché non si cambia di
+        # proposito la logica dei droni.
         row = self.row
         self.assertTrue(row["mission_complete"])
-        self.assertAlmostEqual(row["extinction_time_s"], 74.34)
-        self.assertAlmostEqual(row["fire_damage"], 19533.8235, places=3)
-        self.assertAlmostEqual(row["distance_m"], 502.06494, places=4)
-        self.assertAlmostEqual(row["water_fairness"], 0.97615064, places=6)
+        self.assertAlmostEqual(row["extinction_time_s"], 67.29)
+        self.assertAlmostEqual(row["fire_damage"], 19078.074, places=3)
+        self.assertAlmostEqual(row["burning_health_mean"], 283.5202, places=3)
+        self.assertAlmostEqual(row["water_fairness"], 0.98916485, places=6)
         self.assertEqual(row["collisions"], 0)
         self.assertEqual(row["drones_lost"], 0)
 
@@ -271,7 +473,7 @@ class MisureEStatistica(unittest.TestCase):
         self.assertAlmostEqual(time_shares, 1.0, places=6)
 
     def test_intervallo_di_confidenza_di_una_media(self):
-        summary = experiments.summarize([1.0, 2.0, 3.0, 4.0], experiments.METRICS_BY_KEY["distance_m"])
+        summary = experiments.summarize([1.0, 2.0, 3.0, 4.0], experiments.METRICS_BY_KEY["fire_damage"])
         self.assertAlmostEqual(summary.average, 2.5)
         self.assertAlmostEqual(summary.high - summary.average, 3.182 * 1.2909944 / 2, places=4)
 
@@ -279,6 +481,29 @@ class MisureEStatistica(unittest.TestCase):
         summary = experiments.summarize([True] * 10, experiments.METRICS_BY_KEY["mission_complete"])
         self.assertEqual(summary.average, 1.0)
         self.assertLess(summary.low, 1.0)      # dieci successi su dieci non garantiscono il 100%
+
+    def test_la_correzione_di_holm_toglie_i_falsi_allarmi(self):
+        # Con decine di confronti nello stesso report, qualche differenza "significativa" esce
+        # per puro caso: Holm alza la soglia in proporzione al numero di test.
+        differences = [experiments.Difference(0.0, 1.0, p)
+                       for p in (0.001, 0.02, 0.03, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)]
+        experiments.holm_correction(differences)
+        self.assertAlmostEqual(differences[0].corrected_probability, 0.01)
+        self.assertEqual(sum(1 for d in differences if d.is_real), 1)
+        self.assertEqual(sum(1 for d in differences if d.probability_of_luck < 0.05), 3)
+
+    def test_il_numero_di_incendi_dello_scenario_fisso_viene_rispettato(self):
+        self.assertEqual(len(Simulation(config=SimConfig(NUM_FIRES=5)).fires), 5)
+        self.assertEqual(len(Simulation(config=SimConfig(NUM_FIRES=2)).fires), 2)
+
+    def test_la_flotta_non_cambia_lo_scenario(self):
+        # Le posizioni iniziali dei droni escono da generatori personali: cambiare il numero di
+        # droni non deve spostare la sequenza casuale degli incendi.
+        streams = []
+        for fleet in (8, 12, 20):
+            simulation = Simulation(seed=1, config=SimConfig(NUM_DRONES=fleet))
+            streams.append(simulation.rng.random())
+        self.assertEqual(len(set(streams)), 1)
 
     def test_quando_una_differenza_e_fortuna(self):
         # Otto coppie tutte a favore della variante: come fare otto teste di fila, 2 casi su 256.

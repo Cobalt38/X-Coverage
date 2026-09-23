@@ -6,20 +6,24 @@ da solo con quello che vede (raggio FIRE_DETECTION_RADIUS), quello che ricorda e
 raccontano i vicini via radio. Nel file non esiste una riga che legga lo stato di un altro drone:
 tutto passa dai messaggi (DroneMessage in world.py).
 
-Un passo di simulazione, dall'inizio alla fine (metodo step() in fondo al file):
+Il drone non viene "eseguito" da nessuno. Alla nascita si iscrive al clock condiviso (Clock, in
+world.py) lasciandogli due funzioni private, e da quel momento l'unica cosa che lo fa agire è il
+tempo che passa. Nel resto del programma non c'è modo di comandarlo.
+
+A ogni battito, la seconda funzione (_think, in fondo al file) fa sempre questo:
 
     1. leggo i messaggi arrivati       mailbox.begin_round()
     2. guardo e invecchio la memoria   sense_environment()
     3. unisco ciò che dicono i vicini  merge_neighbor_knowledge()
     4. scelgo cosa fare e mi muovo     decide_and_move()
     5. spruzzo acqua, se ho un fuoco a portata   try_extinguish()
-    6. carico acqua, se sono alla stazione       try_reload()
+    6. carico acqua, se sono al mio posto alla stazione   try_reload()
 
 E la decisione al punto 4 è una scala di priorità di tre gradini:
 
     acqua quasi finita?  -> vado alla stazione           (_move_toward_station)
     conosco un incendio non già affollato?  -> ci vado   (_engage_fire)
-    nessuno dei due      -> perlustro                    (_exploration_target)
+    nessuno dei due      -> perlustro                    (_patrol_point)
 
 Il file è diviso in tre parti: il controllore PID (come si traduce "voglio andare lì" in
 accelerazione), la memoria di copertura (dove si è già guardato) e la classe Drone.
@@ -33,8 +37,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from world import (GOLDEN_ANGLE, DroneMessage, DroneStatus, FirePos, ImportanceMap, Mailbox,
-                   SimConfig, clamp_magnitude, normalize, unit_from_angle, vec_to_tuple)
+from world import (GOLDEN_ANGLE, Clock, DroneMessage, DroneStatus, FirePos, ImportanceMap, Mailbox,
+                   SimConfig, clamp_magnitude, magnitude, normalize, unit_from_angle, vec_to_tuple)
 
 if TYPE_CHECKING:
     from world import SimulationWorld
@@ -77,7 +81,10 @@ class PIDController:
         error = desired_velocity - current_velocity
         error_change = (error - self.previous_error) / max(dt, 1e-12)
         self.accumulated_error += error * dt
-        self.accumulated_error = np.clip(self.accumulated_error, -self.integral_limit, self.integral_limit)
+        # np.clip su due soli numeri costa più del calcolo: si limita a mano, componente per componente.
+        limit = self.integral_limit
+        self.accumulated_error[0] = min(max(self.accumulated_error[0], -limit), limit)
+        self.accumulated_error[1] = min(max(self.accumulated_error[1], -limit), limit)
 
         wanted = (self.proportional_gain * error
                   + self.integral_gain * self.accumulated_error
@@ -155,10 +162,15 @@ def choose_patrol_point(terrain: ImportanceMap, coverage: CoverageMemory, positi
     2. IL COSTO DI OGNI CELLA. Vale la pena andare dove non si guarda da tempo e dove il terreno
        conta, e non vale la pena fare troppa strada:
 
-           costo(cella) = -importanza^γ · (1 - freschezza) + COVERAGE_W_DIST · distanza
+           costo(cella) = -importanza^γ · obsolescenza[s] + COVERAGE_W_DIST · distanza[m]
 
        Si sceglie la cella di costo minimo. L'esponente γ decide quanto ci si concentra sulle
        zone di valore: con γ = 0 tutte le zone contano uguale.
+
+       L'obsolescenza è in SECONDI e cresce senza limite (fino a COVERAGE_STALENESS_CAP_S). Se al
+       suo posto si usasse la freschezza, che sta tra 0 e 1, il guadagno sarebbe limitato a 1
+       mentre il costo della distanza cresce con i metri: dopo pochi secondi nessuna cella varrebbe
+       più di un paio di metri di volo e il drone sceglierebbe la cella su cui è già fermo.
     """
     distance_sq_from_me = (terrain.X - position[0]) ** 2 + (terrain.Y - position[1]) ** 2
 
@@ -167,8 +179,8 @@ def choose_patrol_point(terrain: ImportanceMap, coverage: CoverageMemory, positi
         distance_sq_from_neighbor = (terrain.X - neighbor[0]) ** 2 + (terrain.Y - neighbor[1]) ** 2
         my_zone &= distance_sq_from_me <= distance_sq_from_neighbor
 
-    freshness = coverage.freshness(step, config.COVERAGE_HALF_LIFE_STEPS)
-    worth_a_look = terrain.weight(config.COVERAGE_IMPORTANCE_EXPONENT) * (1.0 - freshness)
+    staleness = coverage.seconds_since_seen(step, config.SIM_TIME_STEP, config.COVERAGE_STALENESS_CAP_S)
+    worth_a_look = terrain.weight(config.COVERAGE_IMPORTANCE_EXPONENT) * staleness
     cost = -worth_a_look + config.COVERAGE_W_DIST * np.sqrt(distance_sq_from_me)
     cost = np.where(my_zone, cost, np.inf)
 
@@ -198,19 +210,23 @@ class Drone:
         self.config: SimConfig = world.config
         # Generatore casuale personale: così le scelte del drone non consumano quello degli
         # incendi, e cambiare il comportamento dei droni non cambia dove scoppiano i fuochi.
+        # Anche le posizioni iniziali escono da qui, non dal generatore dello scenario: così
+        # cambiare il NUMERO di droni non sposta la sequenza casuale degli incendi, e l'esperimento
+        # "flotta" confronta davvero flotte diverse sullo stesso scenario.
         self.rng = random.Random(f"drone-{seed}-{idx}")
 
-        self.position = np.array([rng.uniform(0.0, world.area_width),
-                                  rng.uniform(0.0, world.area_height)], dtype=float)
+        self.position = np.array([self.rng.uniform(0.0, world.area_width),
+                                  self.rng.uniform(0.0, world.area_height)], dtype=float)
         self.velocity = np.zeros(2, dtype=float)
         self.acceleration = np.zeros(2, dtype=float)
         self.desired_velocity = np.zeros(2, dtype=float)
         self.status = DroneStatus.FLYING
         self.burning_steps = 0             # da quanti passi il relitto sta dentro un incendio
+        self._frozen_message: Optional[DroneMessage] = None   # solo per il guasto silenzioso
 
         # L'obiettivo non è un punto fisso: si muove in un campo di forze (vedi sezione 6).
-        self.original_target = np.array([rng.uniform(0.0, world.area_width),
-                                         rng.uniform(0.0, world.area_height)], dtype=float)
+        self.original_target = np.array([self.rng.uniform(0.0, world.area_width),
+                                         self.rng.uniform(0.0, world.area_height)], dtype=float)
         self.anchor_target = self.original_target.copy()
         self.target = self.original_target.copy()
         self.target_velocity = np.zeros(2, dtype=float)
@@ -234,6 +250,11 @@ class Drone:
 
         self.mailbox = Mailbox(self)
         self.pid = PIDController(self.config)
+        # Il drone si iscrive al tempo comune e gli lascia le proprie due funzioni. Da qui in poi
+        # nessuno, nel resto del programma, ha un modo per farlo agire: i suoi metodi sono privati
+        # e l'unico che li conosce è il clock.
+        self.clock: Clock = world.clock
+        self.clock.subscribe(self.idx, self._broadcast, self._think, self._act)
         self.coverage: Optional[CoverageMemory] = (
             CoverageMemory(world.terrain.shape) if self.config.EXPLORATION_MODE == "coverage" else None)
         self._last_patrol_plan_step = -10 ** 9
@@ -263,17 +284,32 @@ class Drone:
     def break_down(self, radio_destroyed: bool) -> None:
         """Il drone è stato coinvolto in un urto e non vola più. Non si ripara.
 
-        Due gravità diverse, decise dalla velocità dell'impatto (vedi simulation.py):
-            - motori rotti: precipita dov'è, ma la radio continua a funzionare. Resta un ripetitore
-              fermo che invecchia e ritrasmette ciò che sapeva: l'informazione non si perde.
-            - perdita totale: anche la radio è spenta. Per lo sciame è come se non fosse mai esistito.
+        La gravità dell'impatto decide se sopravvive la radio (vedi simulation.py); se sopravvive,
+        SILENT_FAILURE_PROBABILITY decide se l'avaria viene dichiarata o no. Vedi DroneStatus.
         """
-        self.status = DroneStatus.DESTROYED if radio_destroyed else DroneStatus.GROUNDED
+        if self.status is DroneStatus.DESTROYED:
+            return                                # già perso del tutto: un secondo urto non lo migliora
+
+        silent = (not radio_destroyed
+                  and self.config.SILENT_FAILURE_PROBABILITY > 0.0
+                  and self.rng.random() < self.config.SILENT_FAILURE_PROBABILITY)
+        if silent:
+            # Si congela adesso l'ultimo messaggio, mentre è ancora tutto vero: da qui in poi la
+            # radio ripeterà per sempre questa fotografia, compreso il "sto volando".
+            self._frozen_message = self._build_message()
+            self.status = DroneStatus.SILENT
+        else:
+            self.status = DroneStatus.DESTROYED if radio_destroyed else DroneStatus.GROUNDED
+
+        if self.status is DroneStatus.DESTROYED:
+            self.clock.unsubscribe(self.idx)      # smette del tutto di rispondere al tempo
         self.velocity[:] = 0.0
         self.acceleration[:] = 0.0
         self.desired_velocity[:] = 0.0
         self.target = self.position.copy()
         self.anchor_target = self.position.copy()
+        if self.status is DroneStatus.SILENT:
+            return    # non libera niente: per gli altri sta ancora lavorando a quello che aveva preso
         # Lascia liberi i compiti che aveva preso, altrimenti gli altri lo conterebbero ancora.
         self.fire_target = None
         self.reloading = False
@@ -292,6 +328,7 @@ class Drone:
             water_station_idx=self.water_station_idx,
             refuel_claim_age=self.refuel_claim_age,
             station_slot=self.station_slot,
+            flying=self.is_flying,
             # Un drone a terra non sta spegnendo niente, anche se è caduto vicino a un fuoco.
             extinguishing=self.is_flying and self.is_extinguishing_fire(),
             fire_target=self.fire_target,
@@ -310,13 +347,15 @@ class Drone:
         if self.coverage is None:
             return None
         sync_steps = self.config.COVERAGE_SYNC_STEPS
-        if self.world.step_counter % sync_steps != self.idx % sync_steps:
+        if self.clock.step_count % sync_steps != self.idx % sync_steps:
             return None
         return self.coverage.snapshot()
 
-    def broadcast(self) -> None:
-        """Prima fase di ogni passo: tutti trasmettono, poi tutti ragionano."""
-        if self.radio_works:
+    def _broadcast(self) -> None:
+        """Fase 1 del battito: dire agli altri come si sta. La chiama il clock, nessun altro."""
+        if self.status is DroneStatus.SILENT:
+            self.world.broadcast(self.idx, self._frozen_message)   # la stessa fotografia, per sempre
+        elif self.radio_works:
             self.world.broadcast(self.idx, self._build_message())
 
     def merge_neighbor_knowledge(self) -> None:
@@ -359,14 +398,14 @@ class Drone:
         if self.coverage is not None:
             self.coverage.mark_seen(
                 self.world.terrain.cells_within(self.position, self.config.FIRE_DETECTION_RADIUS),
-                self.world.step_counter)
+                self.clock.step_count)
 
         # Smentita sul posto: se sono abbastanza vicino da vedere un incendio che ricordo e non lo
         # vedo, allora è spento. Da qui la notizia parte e si propaga agli altri via radio.
         for fire_pos in list(self.known_fires):
             if fire_pos in visible_now:
                 continue
-            if np.linalg.norm(self.position - np.array(fire_pos)) <= self.config.FIRE_DETECTION_RADIUS:
+            if magnitude(self.position - np.array(fire_pos)) <= self.config.FIRE_DETECTION_RADIUS:
                 del self.known_fires[fire_pos]
                 self.extinguished_fires[fire_pos] = 0
                 if self.fire_target == fire_pos:
@@ -397,13 +436,13 @@ class Drone:
         stesso incendio distano al massimo 2 × FIRE_EXTINGUISH_RADIUS, quindi si sentono per forza.
         """
         fire = np.array(fire_pos)
-        my_distance = float(np.linalg.norm(self.position - fire))
+        my_distance = float(magnitude(self.position - fire))
         i_am_working_here = self.water > 0.0 and my_distance <= self.config.FIRE_EXTINGUISH_RADIUS
         my_claim = (0 if i_am_working_here else 1, my_distance, self.idx)
 
         better_claims = 0
         for other_idx, message in self.neighbors_heard.items():
-            distance = float(np.linalg.norm(message.position - fire))
+            distance = float(magnitude(message.position - fire))
             working_here = message.extinguishing and distance <= self.config.FIRE_EXTINGUISH_RADIUS
             interested = working_here or message.fire_target == fire_pos
             if interested and (0 if working_here else 1, distance, other_idx) < my_claim:
@@ -424,7 +463,7 @@ class Drone:
             - se il più vicino è affollato si passa al successivo, non si rinuncia.
         """
         candidates = sorted((fire_pos for fire_pos in self.known_fires if fire_pos not in self.saturated_fires),
-                            key=lambda fire_pos: np.linalg.norm(np.array(fire_pos) - self.position))
+                            key=lambda fire_pos: magnitude(np.array(fire_pos) - self.position))
         if self.fire_target in candidates:
             candidates.remove(self.fire_target)
             candidates.insert(0, self.fire_target)
@@ -434,7 +473,7 @@ class Drone:
             if self._drones_with_priority_on(fire_pos) < self.config.MAX_DRONES_ON_FIRE:
                 return fire_pos, None
             self.saturated_fires[fire_pos] = self.config.FIRE_SATURATION_MEMORY_STEPS
-            already_there = np.linalg.norm(self.position - np.array(fire_pos)) <= self.config.FIRE_DETECTION_RADIUS
+            already_there = magnitude(self.position - np.array(fire_pos)) <= self.config.FIRE_DETECTION_RADIUS
             if crowded_and_close is None and already_there:
                 crowded_and_close = fire_pos
         return None, crowded_and_close
@@ -450,7 +489,7 @@ class Drone:
         self.fire_target = fire_pos
         fire = np.array(fire_pos, dtype=float)
         direction_of_arrival = normalize(self.position - fire)
-        if np.linalg.norm(direction_of_arrival) < 1e-6:        # sono esattamente sopra il fuoco
+        if magnitude(direction_of_arrival) < 1e-6:        # sono esattamente sopra il fuoco
             direction_of_arrival = unit_from_angle(self.idx * GOLDEN_ANGLE)
 
         self.target = self._inside_area(fire + direction_of_arrival * self.config.FIRE_WORK_RADIUS)
@@ -463,8 +502,8 @@ class Drone:
         self.bounce_count += 1
         fire = np.array(fire_pos, dtype=float)
         away = normalize(self.position - fire)
-        if np.linalg.norm(away) < 1e-6:
-            away = normalize(self.velocity) if np.linalg.norm(self.velocity) > 1e-6 else unit_from_angle(self.idx * GOLDEN_ANGLE)
+        if magnitude(away) < 1e-6:
+            away = normalize(self.velocity) if magnitude(self.velocity) > 1e-6 else unit_from_angle(self.idx * GOLDEN_ANGLE)
 
         self.target = self._inside_area(self.position + away * self.config.FIRE_SATURATION_BOUNCE_DISTANCE)
         self.original_target = self.target.copy()
@@ -473,8 +512,8 @@ class Drone:
 
     def _inside_area(self, point: np.ndarray) -> np.ndarray:
         point = point.copy()
-        point[0] = np.clip(point[0], 0.0, self.world.area_width)
-        point[1] = np.clip(point[1], 0.0, self.world.area_height)
+        point[0] = min(max(point[0], 0.0), self.world.area_width)
+        point[1] = min(max(point[1], 0.0), self.world.area_height)
         return point
 
     # --- 7. PERLUSTRAZIONE -------------------------------------------------
@@ -489,10 +528,13 @@ class Drone:
         if self.coverage is None:
             return np.array([self.rng.uniform(0.0, self.world.area_width),
                              self.rng.uniform(0.0, self.world.area_height)], dtype=float)
-        self._last_patrol_plan_step = self.world.step_counter
-        neighbor_positions = [message.position for message in self.neighbors_heard.values()]
+        self._last_patrol_plan_step = self.clock.step_count
+        # Solo i droni ancora in volo si dividono l'area: un relitto non perlustrerà mai la
+        # propria zona, quindi non ha senso lasciargliela.
+        neighbor_positions = [message.position for message in self.neighbors_heard.values()
+                              if message.flying]
         return choose_patrol_point(self.world.terrain, self.coverage, self.position,
-                                   neighbor_positions, self.world.step_counter, self.config)
+                                   neighbor_positions, self.clock.step_count, self.config)
 
     def _head_to(self, point: np.ndarray) -> None:
         self.original_target = point
@@ -514,7 +556,7 @@ class Drone:
             return
 
         if self.coverage is not None and \
-                self.world.step_counter - self._last_patrol_plan_step >= self.config.COVERAGE_REPLAN_STEPS:
+                self.clock.step_count - self._last_patrol_plan_step >= self.config.COVERAGE_REPLAN_STEPS:
             self._head_to(self._patrol_point())
             return
 
@@ -535,13 +577,15 @@ class Drone:
         force = np.zeros(2, dtype=float)
         separation = self.config.TARGET_SEPARATION
         for message in self.neighbors_heard.values():
+            if not message.flying:
+                continue     # l'obiettivo di un relitto è il punto in cui è caduto: non va evitato
             offset = self.target - message.target
-            distance = np.linalg.norm(offset)
+            distance = magnitude(offset)
             if distance >= separation:
                 continue
             if distance < 1e-6:                      # obiettivi coincidenti: si usa la posizione
                 between_drones = self.position - message.position
-                direction = (normalize(between_drones) if np.linalg.norm(between_drones) > 1e-6
+                direction = (normalize(between_drones) if magnitude(between_drones) > 1e-6
                              else unit_from_angle(self.idx * GOLDEN_ANGLE))
                 force += self.config.K_REPULSION_BETWEEN_TARGETS * separation * direction
             else:
@@ -572,7 +616,7 @@ class Drone:
         return clamp_magnitude(total, self.config.MAX_FORCE_ON_TARGET)
 
     def has_reached_target(self) -> bool:
-        return bool(np.linalg.norm(self.position - self.target) < self.config.TARGET_REACHED_DISTANCE)
+        return bool(magnitude(self.position - self.target) < self.config.TARGET_REACHED_DISTANCE)
 
     def _move_target(self) -> None:
         """Fa avanzare l'obiettivo di un passo sotto l'effetto delle forze (solo in perlustrazione)."""
@@ -588,7 +632,7 @@ class Drone:
         # L'ancora insegue l'obiettivo molto lentamente: è quasi un punto fisso, che viene
         # spostato di colpo quando il drone cambia compito.
         offset = self.target - self.anchor_target
-        if np.linalg.norm(offset) > 1e-6:
+        if magnitude(offset) > 1e-6:
             self.anchor_target += offset * (1.0 - math.exp(-config.ANCHOR_TO_TARGET_INTENSITY * config.SIM_TIME_STEP))
 
     # --- 9. EVITAMENTO DELLE COLLISIONI ------------------------------------
@@ -621,11 +665,13 @@ class Drone:
         emergency_push = np.zeros(2, dtype=float)
         in_emergency = False
         # Più si va veloci, più distanza serve: il margine cresce con la propria velocità.
-        safety_margin = config.AVOID_MIN_DISTANCE + config.SAFE_DISTANCE_K_VEL * np.linalg.norm(self.velocity)
+        safety_margin = config.AVOID_MIN_DISTANCE + config.SAFE_DISTANCE_K_VEL * magnitude(self.velocity)
 
         for other_idx, message in self.neighbors_heard.items():
+            if not message.flying and not config.WRECK_BLOCKS_FLIGHT:
+                continue     # è precipitato: sta a terra, ci si vola sopra senza scansarlo
             offset = self.position - message.position
-            distance = np.linalg.norm(offset)
+            distance = magnitude(offset)
             relative_velocity = self.velocity - message.velocity
 
             if distance > 1e-9:
@@ -642,7 +688,7 @@ class Drone:
                 time_to_closest = 0.0                  # stessa velocità: la distanza non cambia
 
             miss_vector = offset + relative_velocity * time_to_closest
-            miss_distance = np.linalg.norm(miss_vector)
+            miss_distance = magnitude(miss_vector)
 
             if miss_distance > 1e-6:
                 push_direction = miss_vector / miss_distance
@@ -706,8 +752,8 @@ class Drone:
         self.velocity = clamp_magnitude(self.velocity + self.acceleration * config.SIM_TIME_STEP,
                                         config.MAX_DRONE_SPEED)
         self.position += self.velocity * config.SIM_TIME_STEP
-        self.position[0] = np.clip(self.position[0], 0.0, self.world.area_width)
-        self.position[1] = np.clip(self.position[1], 0.0, self.world.area_height)
+        self.position[0] = min(max(self.position[0], 0.0), self.world.area_width)
+        self.position[1] = min(max(self.position[1], 0.0), self.world.area_height)
 
     # --- 10. RIFORNIMENTO ---------------------------------------------------
     # Le stazioni hanno pochi posti, quindi serve una coda. Non c'è nessuno che la gestisce: ogni
@@ -715,7 +761,7 @@ class Drone:
     # la stessa regola di precedenza.
 
     def _is_in_service_area(self, position: np.ndarray, station_idx: int) -> bool:
-        distance = np.linalg.norm(position - self.world.water_stations[station_idx])
+        distance = magnitude(position - self.world.water_stations[station_idx])
         return bool(distance <= self.config.WATER_STATION_SERVICE_RADIUS)
 
     def _queue_priority(self, station_slot: Optional[int], position: np.ndarray,
@@ -753,7 +799,7 @@ class Drone:
         for station_idx, station_position in enumerate(self.world.water_stations):
             load = self._busiest_known_load(station_idx)
             crowded = load >= self.config.WATER_STATION_CAPACITY
-            options.append((crowded, np.linalg.norm(self.position - station_position), load, station_idx))
+            options.append((crowded, magnitude(self.position - station_position), load, station_idx))
         return min(options)[3]
 
     def _slot_position(self, station_idx: int, slot: int) -> np.ndarray:
@@ -785,11 +831,31 @@ class Drone:
         if self.station_slot is not None and any(slot == self.station_slot and priority < my_priority
                                                  for priority, slot in others):
             self.station_slot = None
+        if self.station_slot is not None and self.station_slot in self._slots_blocked_by_wrecks():
+            self.station_slot = None          # ci è caduto sopra un drone: quel posto non esiste più
         if self.station_slot is None:
-            taken = {slot for _, slot in others}
+            taken = {slot for _, slot in others} | self._slots_blocked_by_wrecks()
             free = [slot for slot in range(self.config.WATER_STATION_CAPACITY) if slot not in taken]
             if free:
                 self.station_slot = free[0]
+
+    def _slots_blocked_by_wrecks(self) -> set:
+        """Posti di rifornimento su cui è precipitato un drone: fisicamente inagibili.
+
+        Senza questo controllo un drone si assegnerebbe un posto occupato da un relitto, non
+        riuscirebbe mai ad avvicinarsi abbastanza (l'evitamento lo tiene a distanza), e resterebbe
+        in attesa per sempre tenendo occupato un posto per tutti gli altri.
+        """
+        blocked = set()
+        wrecks = [message.position for message in self.neighbors_heard.values() if not message.flying]
+        if not wrecks:
+            return blocked
+        for slot in range(self.config.WATER_STATION_CAPACITY):
+            slot_position = self._slot_position(self.water_station_idx, slot)
+            if any(magnitude(slot_position - wreck) <= self.config.TARGET_REACHED_DISTANCE * 2.0
+                   for wreck in wrecks):
+                blocked.add(slot)
+        return blocked
 
     def _start_refueling_if_needed(self) -> None:
         """Sotto la soglia d'acqua si interrompe tutto e si va a fare rifornimento."""
@@ -814,6 +880,12 @@ class Drone:
         if self.water_station_idx is None:
             self.water_station_idx = self._choose_station()
         self.refuel_claim_age += 1
+        if self.refuel_claim_age > self.config.REFUEL_GIVE_UP_STEPS:
+            # Qualcosa non va (posto bloccato, coda che non avanza): si ricomincia da capo, e la
+            # scelta della stazione viene rifatta con le informazioni di adesso.
+            self.refuel_claim_age = 0
+            self.station_slot = None
+            self.water_station_idx = self._choose_station()
         self._update_my_slot()
         station_position = self.world.water_stations[self.water_station_idx]
 
@@ -823,7 +895,7 @@ class Drone:
             # Si aspetta sull'anello, dal lato da cui si è arrivati: anche qui la spaziatura tra
             # chi aspetta la sistema l'evitamento collisioni, senza assegnare posti.
             side = normalize(self.position - station_position)
-            if np.linalg.norm(side) < 1e-6:
+            if magnitude(side) < 1e-6:
                 side = unit_from_angle(self.idx * GOLDEN_ANGLE)
             destination = self._inside_area(station_position + side * self.config.WATER_STATION_WAIT_RADIUS)
 
@@ -923,12 +995,18 @@ class Drone:
         self._fly()
         self._maybe_pick_new_patrol_point()
 
-    def step(self) -> None:
-        """Un passo di simulazione di questo drone."""
+    def _think(self) -> None:
+        """Fase 2 del battito: leggere la posta, capire cosa succede, decidere e muoversi.
+
+        Anche questa la chiama solo il clock. È il metodo che contiene la vita del drone.
+        """
         if self.status is DroneStatus.DESTROYED:
             return
 
         self.mailbox.begin_round()
+
+        if self.status is DroneStatus.SILENT:
+            return     # la radio ripete l'ultima fotografia: qui dentro non succede più niente
 
         if self.status is DroneStatus.GROUNDED:
             # È a terra ma la radio funziona: non vede e non agisce più, però il suo orologio va
@@ -941,5 +1019,15 @@ class Drone:
         self.sense_environment()
         self.merge_neighbor_knowledge()
         self.decide_and_move()
+
+    def _act(self) -> None:
+        """Fase 3 del battito: agire sul mondo, dopo che TUTTI hanno deciso.
+
+        Spruzzare acqua cambia lo stato del mondo. Se ogni drone agisse subito dopo aver deciso,
+        quelli con indice più alto ragionerebbero su incendi già spenti nello stesso battito:
+        deciderebbero meglio degli altri solo perché sono stati chiamati dopo.
+        """
+        if not self.is_flying:
+            return
         self.try_extinguish()
         self.try_reload()
